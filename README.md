@@ -25,6 +25,13 @@ This project implements neural network-based surrogate modeling for gravitationa
 
 ## Setup
 
+### Option 1: Using Conda Environment
+```bash
+conda env create -f environment.yml
+conda activate torch
+```
+
+### Option 2: Manual Installation
 1. Create and activate conda environment:
 ```bash
 conda create -n torch python=3.9
