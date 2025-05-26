@@ -1,0 +1,104 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+
+# Environment
+.venv/
+env/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs and Datasets
+logs/
+data/
+models/
+*.log
+*.h5
+*.hdf
+*.hdf5
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local development
+.local
+
+# Cache directories
+__pycache__/
+
+# Conda
+conda-meta/
+.env
+
+# SLURM
+slurm-*.out
+slurm-*.err
+*.log
+
+# Build files
+build/
+dist/
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.o
+*.a
+*.lib
+*.pyd
+*.dll
+*.dylib
+*.so.*
+*.pyc
+*.pyo
+*.pyd
+*.pyc
+*.pyo
+*.pyd
+*.pyc
+*.pyo
+*.pyd
+*.pyc
+*.pyo
+*.pyd
+*.pyc
+*.pyo
+*.pyd
+*.pyc
+*.pyo
+*.pyd
+*.pyc
+*.pyo
+*.pyd
+*.pyc
+*.pyo
+*.pyd
+*.pyc
+*.pyo
+*.pyd
+*.pyc
+*.pyo
+*.pyd
+*.pyc
+*.pyo
+*.pyd
+*.pyc
+*.pyo
+*.pyd
+*.pyc
+*.pyo
+*.pyd
