@@ -266,8 +266,7 @@ class SXSLoss(nn.Module):
         power_diff = nn.L1Loss()(abs(wf_wave).sum(dim=-1), abs(outputs_wave).sum(dim=-1) )
         loss = torch.log10( (mm_loss*wave_power).mean()  ) +  (power_diff.mean()) #+ torch.log10(asd_loss)
         return loss
-cover_forward_sxs = Cover_Sphere(mode_map_sxs.copy(), n=20, infer_neg_m = True, device=device)
-cover_forward_nn = Cover_Sphere(mode_map.copy(), n=20, infer_neg_m = True, device=device)
+
 best_mean_mm = 2
 # for optimiz in ['came']:
 # # optclass = topt.Lamb
@@ -278,7 +277,7 @@ layers = [2**6,2**9,2**10]
 state_dict = torch.load(f'pretrain_files/models/decoder_mode_0.pt', map_location=device)
 amp_basis, amp_mean, phase_basis, phase_mean = state_dict['amp_basis'], state_dict['amp_mean'], state_dict['phase_basis'], state_dict['phase_mean']
 _model = Decoder(3, amp_basis, amp_mean, phase_basis, phase_mean, layers=layers, act_fn=torch.nn.ReLU, device = device)
-_model.load_state_dict(state_dict)
+# _model.load_state_dict(state_dict)
 _model.float()
 _model.eval()
 
@@ -289,11 +288,11 @@ ens = _model
 ens.double()
 
 
-# for param in ens.parameters():
-#     param.requires_grad = False
-# for param in ens.parameters():
-#     if param.shape[0] == 123:
-#         param.requires_grad = True
+for param in ens.parameters():
+    param.requires_grad = False
+for param in ens.parameters():
+    if param.shape[0] == 123:
+        param.requires_grad = True
 optclass = topt.load_optimizer('adamw')
 optimizer = optclass(ens.parameters(), lr=2e-3,)
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau
@@ -301,7 +300,7 @@ fig, ax = plt.subplots()
 best_lr = find_best_lr(ens, optimizer, DataLoader(train_ds, batch_size=32, shuffle=True), 
                     criterion = SXSLoss(modes = mode_map, device=device), ax = ax )
 print(f'Best LR found is {best_lr:.2e}')
-plt.savefig('kfold_plots/sxs_lr_finder.png', dpi=300)
+plt.savefig('plots/sxs_lr_finder.png', dpi=300)
 plt.close()
 optimizer = optclass(ens.parameters(), lr=best_lr/10)
 
