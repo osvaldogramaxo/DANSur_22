@@ -216,12 +216,14 @@ class MyLoss(nn.Module):
         self.odd_m = odd_m
 
     def forward(self, outputs, wf):
-        wf = wf.squeeze(1).to(self.model.device)
+        # print(outputs.shape, wf.shape)
+        
+        wf = wf.to(self.model.device)
         data_pcs = self.model.PCA(wf )
         gen_pcs = self.model.PCA(outputs)
         outputs_wave = to_wave(outputs)
         wf_wave = to_wave(wf)
-        
+        # print(outputs_wave.shape, wf_wave.shape)
         amp_weights = torch.ones(self.model.amp_dim).to(self.model.device)
         amp_weights[:8] *= 1
         rec_loss_amp = weighted_L1_loss(data_pcs[...,:self.model.amp_dim], 
@@ -237,7 +239,7 @@ class MyLoss(nn.Module):
 
         
         asd_loss = ASDL1Loss()(wf_wave, outputs_wave)
-        print('DEBUG: LOSS COMPONENTS', torch.log10( (mm_loss*wave_power).mean()  ),'&', rec_loss,'&', power_diff.mean())
+        # print('DEBUG: LOSS COMPONENTS', torch.log10( (mm_loss*wave_power).mean()  ),'&', rec_loss,'&', power_diff.mean())
         loss = torch.log10( (mm_loss*wave_power).mean()  ) + \
                 (rec_loss) + (power_diff.mean()) #+ torch.log10(asd_loss)
         return loss
@@ -536,7 +538,7 @@ def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, 
                 model.latent_dim 
                 model.train()
                 for y, wf in train_dl:
-                    wf=wf.squeeze(1).to(model.device)
+                    wf=wf.to(model.device)
                     data_pcs = model.PCA(wf)
                     gen_pcs = model.decoder(y.to(model.device))
                     
@@ -551,6 +553,7 @@ def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, 
                                                     gen_pcs[...,model.amp_dim:] )
                     
                     rec_loss = rec_loss_amp + rec_loss_phase
+                    print(outputs_wave.shape, wf_wave.shape)
                     mm_loss = mymismatch( outputs_wave,  wf_wave )
                     mm_loss = torch.nan_to_num(mm_loss)
                     wave_power = get_wave_power(wf) if odd_m else 1
@@ -576,7 +579,7 @@ def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, 
                     mm_loss_valid = 0
                     for vy, vwf in val_dl:
                         qs = 1/vy[:,0]
-                        vwf = vwf.squeeze(1).to(model.device)
+                        vwf = vwf.to(model.device)
                         val_pcs = model.PCA(vwf)
                         decoded_valid = model.decoder(vy.to(model.device))
                         outputs_valid = model.invPCA(decoded_valid)
@@ -589,6 +592,7 @@ def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, 
                         rec_loss_phase_valid = nn.L1Loss()(val_pcs[...,model.amp_dim:], 
                                                          decoded_valid[...,model.amp_dim:] )
                         rec_loss_valid += rec_loss_amp_valid + rec_loss_phase_valid
+                        
                         mm_loss_valid = mymismatch( outputs_wave_valid,  vwf_wave )
                         
                         v_wave_power = get_wave_power(vwf) if odd_m else 1

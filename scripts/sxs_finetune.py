@@ -12,7 +12,6 @@ import subprocess
 import time
 
 # %%
-breakpoint()
 time_limit = 60 * 60*48 # Number of seconds in one minute
 np.random.seed(1143) # For reproducibility. 1143 is the founding year of Portugal, 42 was already taken
 torch.manual_seed(1143)
@@ -221,6 +220,8 @@ filt =  (abs(ds.waveform_data[:,0,-1]) < 1e-2)*\
 
 ds.waveform_data = abs(ds.waveform_data)*np.exp(1j*get_phases(ds.waveform_data).numpy())
 ds.waveform_data = ds.waveform_data[filt][:,0,:]
+ds.waveform_data = np.concatenate([abs(ds.waveform_data), get_phases(ds.waveform_data)], axis=-1)
+
 ds.params_data = ds.params_data[filt]
 ds.data_len = len(ds.waveform_data)
 print('Filtered dataset size:',ds.data_len)
@@ -300,7 +301,7 @@ fig, ax = plt.subplots()
 best_lr = find_best_lr(ens, optimizer, DataLoader(train_ds, batch_size=32, shuffle=True), 
                     criterion = SXSLoss(modes = mode_map, device=device), ax = ax )
 print(f'Best LR found is {best_lr:.2e}')
-plt.savefig('plots/sxs_lr_finder.png', dpi=300)
+plt.savefig('kfold_plots/sxs_lr_finder.png', dpi=300)
 plt.close()
 optimizer = optclass(ens.parameters(), lr=best_lr/10)
 

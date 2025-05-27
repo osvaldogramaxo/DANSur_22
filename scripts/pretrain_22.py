@@ -20,6 +20,7 @@ import pytorch_optimizer as topt
 # from Sophia.sophia import SophiaG
 import seaborn as sns 
 from utils import *
+from functools import partial
 sns.set_style()
 # torch.set_default_dtype(torch.float32)
 # silence warnings
@@ -59,13 +60,6 @@ class MyDataset(Dataset):
 class SinActivation(nn.Module):
     def forward(self, x):
         return torch.sin(x)/2+0.5
-
-class Q_corrector(nn.Module):
-    def forward(self, encoded):
-        encoded[:,0] = torch.sigmoid(encoded[:,0])
-        encoded[:,1] = torch.sigmoid(encoded[:,1])*2-1
-        encoded[:,2] = torch.sigmoid(encoded[:,2])
-        return encoded
 
 # %%
 def weighted_mse_loss(input, target, weight):
@@ -467,40 +461,6 @@ def get_pca_bases(base_tensor, return_only_xvar = False, plus_cross = False, qs 
         return xvar
     return pca_1_torch, pca_1_means, pca_2_torch, pca_2_means
 
-# def get_svd_bases(base_tensor):
-#     svd_a = TruncatedSVD(n_components = 30)
-#     svd_a.fit(base_tensor.cpu().numpy()[:,:length][:])
-
-#     svd_p = TruncatedSVD(n_components = 70)
-#     svd_p.fit(base_tensor.cpu().numpy()[:,length:][:])
-    
-
-#     svd_a_torch = tensor(svd_a.components_)
-#     svd_p_torch = tensor(svd_p.components_)
-
-#     svd_a_means = 0.
-#     svd_p_means = 0.
-
-#     return svd_a_torch, svd_a_means, svd_p_torch, svd_p_means
-def get_joint_pca(base_tensor):
-    """
-    Perform a joint PCA on the input base_tensor.
-
-    Args:
-        base_tensor: The input base tensor for PCA.
-
-    Returns:
-        tuple: A tuple containing the PCA components (pca_torch) and mean (pca_means).
-    """
-    pca_both = PCA(n_components = 50 )
-    pca_both.fit(base_tensor.cpu().numpy()[:10000])
-    
-
-    pca_torch = tensor(pca_both.components_)
-    pca_means = tensor(pca_both.mean_)
-
-
-    return pca_torch, pca_means
 
 def find_best_lr(model, optimizer, train_dl, criterion = None, ax = None):
         lr_finder = LRFinder(model, optimizer, criterion, device="cuda")
@@ -695,7 +655,7 @@ def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, 
                 train_losses.append(loss.item())
                 val_losses.append(val_loss.item())
                 if (epoch % 10 == 0):
-                    torch.save(bestmodel_weights, os.path.join(MODELS_FOLDER, 'rolling', f'decoder_mode_{mode}.pt'))
+                    torch.save(bestmodel_weights, os.path.join(MODELS_FOLDER, 'rolling', f'decoder.pt'))
                     if plotting:
                         plt.figure()
                         plt.plot(train_losses, label='train')
@@ -710,11 +670,11 @@ def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, 
         pass
         # Save the best model
     # if plotting:
-    torch.save(bestmodel_weights, os.path.join(MODELS_FOLDER, f'decoder_mode_{mode}.pt'))
+    torch.save(bestmodel_weights, os.path.join(MODELS_FOLDER, f'decoder.pt'))
     model.load_state_dict(bestmodel_weights)
     best_mean_mm = np.min(mm_history)
     # Save losses
-    torch.save({'train_losses': train_losses, 'val_losses': val_losses, 'val_mms': mm_history}, os.path.join(MODELS_FOLDER, f'decoder_losses_{mode}.pt'))
+    torch.save({'train_losses': train_losses, 'val_losses': val_losses, 'val_mms': mm_history}, os.path.join(MODELS_FOLDER, f'decoder_losses.pt'))
     return bestloss, best_mean_mm
 class MultiEpochsDataLoader(torch.utils.data.DataLoader):
 
@@ -822,34 +782,7 @@ if __name__ == "__main__":
 
     val_ds = MyDataset( base_valid_params_q.to(model.device).float(), base_valid.to(model.device).float())
     val_dl = MultiEpochsDataLoader(val_ds, batch_size=len(val_ds), shuffle=False, pin_memory=False)
-    
-    # load model in /home/osvaldogramaxo/scratch/PCA_approx/models/rolling/decoder_mode_0.pt
-    # model.load_state_dict(torch.load('/home/osvaldogramaxo/scratch/PCA_approx/models/rolling/decoder_mode_0.pt'))
 
-    
-    
-    
-
-    
-    # import pickle
-    # nr_pca_basis = pickle.load(open('pca_stuff.pkl', 'rb'))
-    # for i,x in enumerate(model.state_dict()):
-    #     if i==4: break
-    #     print(i,x)
-    #     model.state_dict()[x][:] *= 0 
-    #     model.state_dict()[x][:] += nr_pca_basis[i][:].cuda()*1
-    
-    # model
-    
-
-    # xvar = get_pca_bases(base_tensor,return_only_xvar=True)
-
-    # model = Decoder(latent_dim, *get_svd_bases(base_tensor), layers = [2**6, 2**9, 2**10])
-    # model = DecoderJoint(latent_dim, *get_joint_pca(base_tensor), layers = [2**6, 2**9, 2**10, 2**12])
-    
-    # optclass = torch.optim.AdamW
-    # optclass = topt.Yogi
-    from functools import partial
     # optclass = partial(SophiaG, rho=0.5, betas=(0.96, 0.99))
     # optimizer = topt.DiffGrad(model.parameters(), lr=3e-3, weight_decay=0e-4)
     #optimizer = SophiaG(model.parameters(), lr=3e-3,rho=0.5,betas=(0.96, 0.99), weight_decay=0e-2)
@@ -886,8 +819,7 @@ if __name__ == "__main__":
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau
     train_net(model, optimizer, train_dl, val_dl,  n_epochs, scheduler=scheduler, mode = args.mode)                        
 
-    # model.load_state_dict(torch.load(f'decoder_mode_{args.mode}.pt'))
-    torch.save(model.state_dict(), os.path.join(MODELS_FOLDER, f'decoder_mode_{args.mode}.pt'))
+    torch.save(model.state_dict(), os.path.join(MODELS_FOLDER, f'decoder.pt'))
     # og_wave = to_wave(vwf)
     # pred_waves = to_wave(0l.invPCA(model.decoder(vy.to(model.device)).detach()))
     mms =(1-myoverlap(to_wave(base_valid.to(model.device)), to_wave(model.invPCA(model.decoder(base_valid_params_q.to(model.device)))  )).detach().cpu().abs().numpy())
@@ -901,7 +833,7 @@ if __name__ == "__main__":
     plt.hist((mms), bins=bins, histtype='step')
     plt.xlabel(r'$1-\mathcal{O}$')
     plt.xscale('log')
-    plt.title(f'Validation mismatch distribution (mode = {args.mode})')
-    plt.savefig(os.path.join(PLOTS_FOLDER, f'{plot_path}/mm_hist_mode_{args.mode}.png'), dpi=300)
+    plt.title(f'Validation mismatch distribution')
+    plt.savefig(os.path.join(PLOTS_FOLDER, f'{plot_path}/mm_hist.png'), dpi=300)
     
 

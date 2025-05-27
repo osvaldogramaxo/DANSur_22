@@ -31,7 +31,7 @@ conda env create -f environment.yml
 conda activate torch
 ```
 
-### Option 2: Manual Installation
+### Option 2: Manual Installation with pip
 1. Create and activate conda environment:
 ```bash
 conda create -n torch python=3.9
@@ -45,10 +45,16 @@ pip install -r requirements.txt
 
 ## Usage
 
+### Waveform Generation
+To generate waveforms with specific modes:
+```bash
+python -m scripts.waveform_generation_multimode --modes "[(2,2), (3,3)]" --sur NRSur7dq4
+```
+
 ### Training
-- Pretraining: `python scripts/pretrain_22.py`
-- Fine-tuning: `python scripts/sxs_finetune_kfold.py`
-- Training decoder ensemble: `python scripts/train_decoder_ensemble.py`
+- Pretraining: `python -m scripts.pretrain_22`
+- Fine-tuning: `python -m scripts.sxs_finetune_kfold`
+- Training decoder ensemble: `python -m scripts.train_decoder_ensemble`
 
 ### SLURM Job Submission
 For cluster submission, use the scripts in the `submission` directory:
@@ -56,11 +62,7 @@ For cluster submission, use the scripts in the `submission` directory:
 sbatch submission/finetune_sxs_kfold.sh
 ```
 
-### Waveform Generation
-To generate waveforms with specific modes:
-```bash
-python scripts/waveform_generation_multimode.py --modes "[(2,2), (3,3)]" --sur NRSur7dq4
-```
+
 
 ## Project Details
 
@@ -68,13 +70,11 @@ This project uses:
 - Neural network surrogates for gravitational wave signal approximation
 - K-fold cross-validation for model training
 - Custom loss functions for waveform optimization
-- Support for multiple waveform modes
-- Integration with LIGO/Virgo gravitational wave analysis tools
 
 ## Contributing
 
 Please add new scripts to the appropriate directories and update the README with any new functionality.
 
 ## License
+This project is licensed under the Creative Commons Attribution 4.0 International License. To view a copy of this license, visit <http://creativecommons.org/licenses/by/4.0/>.
 
-[Add your license information here]

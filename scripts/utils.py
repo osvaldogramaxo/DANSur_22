@@ -1,4 +1,3 @@
-
 import lal
 import h5py
 import numpy as np
@@ -130,164 +129,32 @@ class Decoder(nn.Module):
         x = self.invPCA(x)
         return x
 
-class Cover_Sphere(nn.Module):
-    """
-    Sum the input tensor with spherical
-    harmonics. Initialize with a mode_map
-    dictionary and the number of points on
-    the sphere in each direction (theta and phi). 
-    The input tensor should have
-    shape (batch, n_modes, data). The output
-    tensor will have shape (batch, n, n, data)
-    """
-    def __init__(self, mode_map, n=10, infer_neg_m = False, device = 'cpu'):
-        super(Cover_Sphere, self).__init__()
-        self.n = n
-        self.mode_map = mode_map
-        self.infer_neg_m = infer_neg_m
-        if infer_neg_m:
-            self.neg_m_l_coeffs = torch.tensor([(-1)**l for _, (l,_) in self.mode_map.items()]).to(device)[None,:,None]
-            mode_map_neg_m = {k+len(mode_map): (l, -m) for k, (l, m) in self.mode_map.items()}
-            self.mode_map = {**self.mode_map, **mode_map_neg_m}
-            # self.ells = np.array([l for l, _ in self.mode_map.values()])
-            # self.ms = np.array([m for _, m in self.mode_map.values()])
-            
-
-        self.theta = np.linspace(0, np.pi, n+2)[1:-1]
-        self.phi = np.linspace(0, 2 * np.pi, n+1)[:-1]
-        self.THETA, self.PHI = np.meshgrid(self.theta, self.phi)
-        self.l_values = np.array([self.mode_map[i][0] for i in range(len(self.mode_map))])
-        self.m_values = np.array([self.mode_map[i][1] for i in range(len(self.mode_map))])
-        self.sylm_values = torch.from_numpy( np.array([spin_spherical_harmonic(-2, self.l_values[i], 
-                                          self.m_values[i], self.THETA, self.PHI) 
-                                          for i in range(len(self.mode_map))])
-                                            ).to(device)
-    def forward(self, h):
-        if self.infer_neg_m:
-            neg_m_h = self.neg_m_l_coeffs*torch.conj(h)
-            h = torch.cat([h, neg_m_h], dim=1)
-            
-        h_sphere = torch.einsum('ijk,lim->ljkm', self.sylm_values.to(h.device), h)
-        return h_sphere
-
-    
-    
-# Example usage:
-# mode_map = {0: (2, 2), 1: (2, 1), 2: (3, 3), 3: (4, 4)}
-# h = np.array([x for k,x in gw.items()]).transpose(1,0,2)
-# cover_forward = Cover_Sphere(mode_map, n=5)
-# h_sphere = cover_forward(torch.from_numpy(h))
-
-class NNSurEnsembleModel(nn.Module):
-    def __init__(self, decoders, modes_list, device = 'cpu'):
-        super(NNSurEnsembleModel, self).__init__()
-        # self.decoders = [torch.compile(x, mode = 'max-autotune', fullgraph=True, dynamic=True ) for x in decoders]
-        self.decoders = nn.ModuleList(decoders)
-        self.modes_list = modes_list
-        self.device = device
-    def to_wave(self, x):
-        return x[...,:2048]*torch.exp(1j*x[...,2048:])
-    # @torch.inference_mode()
-    def forward(self, x):
-        x = [decoder(x) for decoder in self.decoders]
-        x = torch.stack(x, dim=1)
-        x = self.to_wave(x)
-        return x
-
-class bg_ds(Dataset):
-    def __init__(self, path_to_data: str,  key):
-        self.key = key
-        self.path_to_data = path_to_data
-        self.unwindowed = h5py.File('background.hdf')
-        
-
-    def __getitem__(self, idx):
-        offset = 4096*2*idx
-        out = np.stack((
-                self.unwindowed[f'H1/{self.key}'][offset:offset+4096*2], self.unwindowed[f'L1/{self.key}'][offset:offset+4096*2]
-        ))
-        return tensor(out*1e21)
-        
-    def __len__(self):
-        return len(self.unwindowed_h1)//(4096*2)
-    
-
-# %%
-def get_cplx_wave(param, length=2048, roll=0,whiten = False, sur = None, modes = [(2,2)]):
-
+def get_cplx_wave(param, length=2048, roll=0,whiten = False, sur = None):
     sur = gwsurrogate.LoadSurrogate(sur) 
     dt=2 # in M
     f_low=0.005 if 'Hyb' in sur.name else 0.
     qs = 1/param['mass_ratio'] if param['mass_ratio'].max()<1 else param['mass_ratio']
-    _, h, _ = sur(qs, [0,0,param['chi_1']], [0,0,param['chi_2']],  times = np.arange(-4094+100, 102, 2), f_low=0)   # dyn stands for dynamics, do dyn.keys() to see contents
+    _, h, _ = sur(qs, [0,0,param['chi_1']], [0,0,param['chi_2']],  times = np.arange(-4094+100, 102, dt), f_low=f_low)   # dyn stands for dynamics, do dyn.keys() to see contents
 
-    hmax = abs(h[(2,2)]).argmax()
-    modestack = []
-    for mode in modes:
-        h_mode = h[mode]#[:hmax+50]
-        modestack.append(h_mode)
-    wave_cplx = np.stack(modestack)
-        # cut = np.arange(-length,0) if length!=0 else np.arange(len(wave_cplx))
+    wave_cplx = h[(2,2)]
     if roll!=0:
         postmerg_frac = 1/5
         return np.roll(wave_cplx, -int(length*postmerg_frac), axis=-1)[-length:]
     else:
         return wave_cplx
         
-class ASDL1Loss(nn.Module):
-    def __init__(self, reduction='mean', scale='linear', normalize=False):
-        """
-        Initialize the ASDL1Loss module.
-
-        Args:
-            reduction (str): Specifies the reduction to apply to the output:
-                             'none' | 'mean' | 'sum'. Default: 'mean'
-        """
-        super(ASDL1Loss, self).__init__()
-        self.l1_loss = nn.L1Loss(reduction=reduction)
-        self.scale = scale
-        self.normalize = normalize
-
-    def forward(self, vwf_wave, outputs_wave_valid):
-        """
-        Compute the loss between the ground truth and prediction in the amplitude spectral domain (in dB).
-
-        Args:
-            vwf_wave (Tensor): Ground truth waveform.
-            outputs_wave_valid (Tensor): Predicted waveform.
-
-        Returns:
-            Tensor: The L1 loss computed on the amplitude spectral densities in dB.
-        """
-        # Compute the FFT of both the ground truth and predicted waveforms.
-        gt_fft = torch.fft.fft(vwf_wave)
-        pred_fft = torch.fft.fft(outputs_wave_valid)
-        if self.normalize:
-            gt_fft = gt_fft / torch.mean(torch.abs(gt_fft))
-            pred_fft = pred_fft / torch.mean(torch.abs(gt_fft))
-        # Compute the amplitude spectral density (in dB).
-        if self.scale == 'dB':
-            gt_asd_dB = 20 * torch.log10(torch.abs(gt_fft))
-            pred_asd_dB = 20 * torch.log10(torch.abs(pred_fft))
-        elif self.scale == 'linear':
-            gt_asd_dB = torch.abs(gt_fft)
-            pred_asd_dB = torch.abs(pred_fft)
-
-        # Compute and return the L1 loss between the two.
-        loss = self.l1_loss(gt_asd_dB, pred_asd_dB)
-        return loss
-
-def gen_data(inj_params, N = 1024, parallel=False, use_tqdm = True, whiten = False, modes = None, sur = None):
+def gen_data(inj_params, N = 1024, parallel=False, use_tqdm = True, whiten = False,sur = None):
     bilby.utils.logging.disable()
     if use_tqdm: auxfunc=tqdm
     else: auxfunc = lambda x: x
     # print('SURROGATE MODEL', sur)
     # sur = gwsurrogate.LoadSurrogate(sur)
     if parallel:
-        out = Parallel(n_jobs=-1, backend='multiprocessing')(delayed(get_cplx_wave)(param, whiten=False, sur = sur, modes = modes) for param in auxfunc(inj_params))
+        out = Parallel(n_jobs=-1, backend='multiprocessing')(delayed(get_cplx_wave)(param, whiten=False, sur = sur) for param in auxfunc(inj_params))
     else:
-        out=[get_cplx_wave(param, whiten=False, sur=sur, modes=modes) for param in tqdm(inj_params)]
+        out=[get_cplx_wave(param, whiten=False, sur=sur) for param in tqdm(inj_params)]
     return np.stack(out)
+
 def plot_hist_from_binned_statistic(bin_edges, bin_means, color=None):
     first_plot = plt.step(bin_edges[1:], bin_means,color = color, where='pre')
     if color is None:
@@ -309,17 +176,17 @@ def convert_dict_to_list_of_dicts(input_dict):
 # %%
 
 
-def generate_dataset(priors, modes, sur):
+def generate_dataset(priors, sur):
     """
     Generates and saves data to an HDF5 file.
     """
     
     chunksize = 1024
     N = chunksize*100
-    with h5py.File(f'./{sur}_dataset_{len(modes)}modes_deucalion_1M.hdf', 'w', libver='latest', swmr=True) as file:
+    with h5py.File(f'./{sur}_dataset.hdf', 'w', libver='latest', swmr=True) as file:
         # Create a dataset for storing classifier data
-        dset = file.create_dataset(name='Waveforms', shape=(N,len(modes),2048), dtype=np.complex128)
-        dset.attrs['modes'] = modes
+        dset = file.create_dataset(name='Waveforms', shape=(N,2048), dtype=np.complex128)
+        
         
         # Create a dataset for storing SNRs
         dset_snrs = file.create_dataset(name='Parameters', shape=(N,len(priors.keys())), dtype=np.float32)
@@ -332,7 +199,7 @@ def generate_dataset(priors, modes, sur):
             # param_names = [k for k,_ in params.items()]
             params_list = convert_dict_to_list_of_dicts(params)
             # Get data using the gen_data function
-            basedata = gen_data(parallel=True, inj_params=params_list, N=chunksize, use_tqdm=True, whiten=False, modes = modes, sur = sur)
+            basedata = gen_data(parallel=True, inj_params=params_list, N=chunksize, use_tqdm=True, whiten=False, sur = sur)
             # Restore the original standard output
             # sys.stdout = og_stdout
             
@@ -399,3 +266,46 @@ class EarlyStopping:
             self.trace_func(f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Saving model ...')
         torch.save(model.state_dict(), self.path)
         self.val_loss_min = val_loss
+
+class ASDL1Loss(nn.Module):
+    def __init__(self, reduction='mean', scale='linear', normalize=False):
+        """
+        Initialize the ASDL1Loss module.
+
+        Args:
+            reduction (str): Specifies the reduction to apply to the output:
+                             'none' | 'mean' | 'sum'. Default: 'mean'
+        """
+        super(ASDL1Loss, self).__init__()
+        self.l1_loss = nn.L1Loss(reduction=reduction)
+        self.scale = scale
+        self.normalize = normalize
+
+    def forward(self, vwf_wave, outputs_wave_valid):
+        """
+        Compute the loss between the ground truth and prediction in the amplitude spectral domain (in dB).
+
+        Args:
+            vwf_wave (Tensor): Ground truth waveform.
+            outputs_wave_valid (Tensor): Predicted waveform.
+
+        Returns:
+            Tensor: The L1 loss computed on the amplitude spectral densities in dB.
+        """
+        # Compute the FFT of both the ground truth and predicted waveforms.
+        gt_fft = torch.fft.fft(vwf_wave)
+        pred_fft = torch.fft.fft(outputs_wave_valid)
+        if self.normalize:
+            gt_fft = gt_fft / torch.mean(torch.abs(gt_fft))
+            pred_fft = pred_fft / torch.mean(torch.abs(pred_fft))
+        # Compute the amplitude spectral density (in dB).
+        if self.scale == 'dB':
+            gt_asd_dB = 20 * torch.log10(torch.abs(gt_fft))
+            pred_asd_dB = 20 * torch.log10(torch.abs(pred_fft))
+        elif self.scale == 'linear':
+            gt_asd_dB = torch.abs(gt_fft)
+            pred_asd_dB = torch.abs(pred_fft)
+
+        # Compute and return the L1 loss between the two.
+        loss = self.l1_loss(gt_asd_dB, pred_asd_dB)
+        return loss

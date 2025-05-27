@@ -20,4 +20,4 @@ set -x #echo on
 nvidia-smi
 # set +x #echo off
 # sleep 10
-python3 ./sxs_finetune.py
+python3 -m scripts.sxs_finetune

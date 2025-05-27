@@ -16,21 +16,11 @@ for i in "$@"; do
         --sur=*)
             SUR="${i#*=}"
             ;;
-        --modes=*)
-            MODES="${i#*=}"
-            ;;
     esac
 done
 ENVIRONMENT="torch"
 eval "$(conda shell.bash hook)"
 conda activate $ENVIRONMENT
 
-echo ">>>> NVIDIA INFO"
-set -x #echo on
-nvidia-smi
-# set +x #echo off
-# sleep 10
-# MODES=$1
 
-# python3 $HOME/scratch/ml_mock_data/ds3/script_train.py
-python3 waveform_generation_multimode.py --modes $MODES --sur $SUR
+python3 -m scripts.waveform_generation --sur $SUR
