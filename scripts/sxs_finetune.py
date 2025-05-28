@@ -21,6 +21,25 @@ import time
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f'Using device: {device}')
 #%%
+def get_pca_bases(base_tensor, return_only_xvar = False, plus_cross = False, qs = None, plotting=True, length=2048):
+    pca_1 = PCA(n_components = 30 )
+    pca_1.fit(base_tensor[:10000,:length])
+    pca_2 = PCA(n_components = 70) 
+    pca_2.fit(base_tensor[:10000,length:])
+
+    pca_1_torch = tensor(pca_1.components_)
+    pca_2_torch = tensor(pca_2.components_)
+
+    pca_1_means = tensor(pca_1.mean_)
+    pca_2_means = tensor(pca_2.mean_)
+    
+    xvar_a = tensor(pca_1.explained_variance_ratio_)
+    xvar_p= tensor(pca_2.explained_variance_ratio_)
+    xvar = torch.cat([xvar_a, xvar_p ])
+    if return_only_xvar:
+        return xvar
+    return pca_1_torch, pca_1_means, pca_2_torch, pca_2_means
+
 def get_test_mms(model, test_dl):
     model.eval()
     with torch.no_grad():
@@ -109,7 +128,7 @@ class _RepeatSampler(object):
 
 
 time_limit = 60 * 60*48 # Number of seconds in one minute
-np.random.seed(32) # For reproducibility. 32 is the founding year of Portugal, 42 was already taken
+np.random.seed(32) # For reproducibility.
 torch.manual_seed(32)
 #%%
 state_dict = torch.load(f'pretrain_files/models/decoder.pt', map_location=device)
@@ -341,7 +360,7 @@ test_ds = MyDataset(X=ds[test_idx][0], y=ds[test_idx][1], device=device)
 test_dl = MultiEpochsDataLoader(test_ds, batch_size=len(test_ds), shuffle=False)
 layers = [2**6,2**9,2**10]
 # Train 5 models with k-fold cross-validation
-train = False
+train = True
 if train:
     for fold, (train_idx, val_idx) in enumerate(kf.split(train_test_idx)):
         print(f'\nTraining fold {fold+1}/{k}... ')
@@ -356,14 +375,14 @@ if train:
         train_fold_dl = MultiEpochsDataLoader(train_fold_ds, batch_size=len(train_fold_ds), shuffle=True)
         val_fold_dl = MultiEpochsDataLoader(val_fold_ds, batch_size=len(val_fold_ds), shuffle=False)
         
-        # amp_basis, amp_mean, phase_basis, phase_mean = get_pca_bases(torch.tensor(ds[train_fold_idx][1]), qs = 1/torch.tensor(ds[train_fold_idx][0])[:,0], plotting=False)
+        amp_basis, amp_mean, phase_basis, phase_mean = get_pca_bases(torch.tensor(ds[train_fold_idx][1]), qs = 1/torch.tensor(ds[train_fold_idx][0])[:,0], plotting=False)
         # Initialize new model for this fold
         model = Decoder(3, amp_basis, amp_mean, phase_basis, phase_mean, layers=layers, act_fn=torch.nn.ReLU, device=device)
         # model.load_state_dict(state_dict)
         model.float()
         model.train()
-        for param in model.parameters():
-            param.requires_grad = True
+        # for param in model.parameters():
+        #     param.requires_grad = True
         # for param in list(model.parameters())[:11]:
         #     param.requires_grad = True
         # Initialize optimizer and scheduler

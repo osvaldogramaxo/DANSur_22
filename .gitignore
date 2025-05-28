@@ -19,9 +19,9 @@ ENV/
 *.swo
 
 # Logs and Datasets
-logs/
+# logs/
 # data/
-models/
+# models/
 *.log
 # *.h5
 *.hdf

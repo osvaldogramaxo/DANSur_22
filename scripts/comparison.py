@@ -140,6 +140,7 @@ mode_map_sxs = {0: (2, 2), 1: (3, 3), 2: (2, 1), 3: (4, 4)}
 
 # Split data into 87.5% train and 12.5% test
 train_test_idx, test_idx = np.split(np.random.permutation(len(ds)), [int(len(ds)*0.875)])
+
 k = 3
 # Split train data into k folds for cross-validation
 kf = KFold(n_splits=k, shuffle=True, random_state=32)
@@ -148,20 +149,35 @@ kf = KFold(n_splits=k, shuffle=True, random_state=32)
 # Create test dataset
 test_ds = MyDataset(X=ds[test_idx][0], y=ds[test_idx][1], device=device)
 test_dl = MultiEpochsDataLoader(test_ds, batch_size=len(test_ds), shuffle=False)
-layers = [2**6,2**9,2**10]
 
+train_ds = MyDataset(X=ds[train_test_idx][0], y=ds[train_test_idx][1], device=device)
+train_dl = MultiEpochsDataLoader(train_ds, batch_size=2**10, shuffle=True)
+
+layers = [2**6,2**9,2**10]
+#%%
 pretrain_dict = torch.load(f'pretrain_files/models/decoder.pt', map_location=device)
 finetune_dict = torch.load( f'kfold_models/decoder_kfold.pt', map_location = device)
+sxs_trained_dict = torch.load(f'models/decoder_kfold.pt', map_location=device)
 
 amp_basis, amp_mean, phase_basis, phase_mean = pretrain_dict['amp_basis'], pretrain_dict['amp_mean'], pretrain_dict['phase_basis'], pretrain_dict['phase_mean']
+
 model_pretrained_only = Decoder(3, amp_basis, amp_mean, phase_basis, phase_mean, layers=layers, act_fn=torch.nn.ReLU, device=device)
 model_pretrained_only.load_state_dict(pretrain_dict)
+
+model_sxs_trained_only = Decoder(3, amp_basis, amp_mean, phase_basis, phase_mean, layers=layers, act_fn=torch.nn.ReLU, device=device)
+model_sxs_trained_only.load_state_dict(sxs_trained_dict)
+
 model_finetuned =  Decoder(3, amp_basis, amp_mean, phase_basis, phase_mean, layers=layers, act_fn=torch.nn.ReLU, device=device)
 model_finetuned.load_state_dict(finetune_dict)
 
+model_pretrained_only.eval()
+model_finetuned.eval()
+model_sxs_trained_only.eval()
+
 pretrain_mms = get_test_mms(model_pretrained_only, test_dl)
 finetune_mms = get_test_mms(model_finetuned, test_dl)
-bins_min = np.log10( min(pretrain_mms.min(), finetune_mms.min())/2 )
+sxs_trained_mms = get_test_mms(model_sxs_trained_only, test_dl)
+bins_min = np.log10( min(pretrain_mms.min(), finetune_mms.min(), sxs_trained_mms.min())/2 )
 bins_max = 0
 bins = np.logspace(bins_min, bins_max, 20)
 qs = 1/ds[test_idx][0][:,0]
@@ -170,16 +186,19 @@ qs = 1/ds[test_idx][0][:,0]
 plt.figure()
 plt.hist(pretrain_mms, bins=bins, histtype='step', label='Pretrain only')
 plt.hist(finetune_mms, bins=bins, histtype='step', label = 'Fine-tuned on NR')
+plt.hist(sxs_trained_mms, bins=bins, histtype='step', label = 'SXS-only training')
 plt.xscale('log')
 plt.xlabel('$\mathfrak{M}$')
 plt.legend()
+plt.savefig('comparison_plots/pretrain_finetune_mms.png', dpi=300)
 
 plt.figure()
 plt.scatter(qs,pretrain_mms, label='Pretrain only')
 plt.scatter(qs,finetune_mms, label='Fine-tuned on NR')
+plt.scatter(qs,sxs_trained_mms, label='SXS-only training')
 plt.xlabel('q')
 plt.ylabel('$\mathfrak{M}$')
-plt.xscale('log')
+plt.yscale('log')
 plt.legend()
-
+plt.savefig('comparison_plots/pretrain_finetune_mms_q.png', dpi=300)
 # %%
