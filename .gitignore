@@ -20,7 +20,7 @@ ENV/
 
 # Logs and Datasets
 logs/
-data/
+# data/
 models/
 *.log
 # *.h5
