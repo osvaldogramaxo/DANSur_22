@@ -338,7 +338,7 @@ def plot_hist_reconstruct(pca_a, pca_p, data, length = 2048, qs=None, plus_cross
         plt.xscale('log')
         plt.xlabel(r'$1-\mathcal{O}$')
         plt.ylabel(r'$Normalized sqrt of Wave Power$')
-        plt.savefig(os.path.join(PLOTS_FOLDER, f'recon_mm_vs_pow_{mode}.png'), dpi=300)
+        plt.savefig(os.path.join(PLOTS_FOLDER, f'recon_mm_vs_pow.png'), dpi=300)
         plt.close()
         
         
@@ -355,7 +355,7 @@ def plot_hist_reconstruct(pca_a, pca_p, data, length = 2048, qs=None, plus_cross
             plt.xscale('log')
         plt.yscale('log')
         plt.legend()
-        plt.savefig(os.path.join(PLOTS_FOLDER, f'recon_mm_hist_{mode}.png'), dpi=300)
+        plt.savefig(os.path.join(PLOTS_FOLDER, f'recon_mm_hist.png'), dpi=300)
         plt.close()
         
         if qs is not None:
@@ -368,7 +368,7 @@ def plot_hist_reconstruct(pca_a, pca_p, data, length = 2048, qs=None, plus_cross
             plt.xscale('log')
             plt.xlabel(r'$1-\mathcal{O}$')
             plt.ylabel(r'$q$')
-            plt.savefig(os.path.join(PLOTS_FOLDER, f'recon_mm_vs_q_{mode}.png'), dpi=300)
+            plt.savefig(os.path.join(PLOTS_FOLDER, f'recon_mm_vs_q.png'), dpi=300)
             plt.close()
             
 
@@ -383,7 +383,7 @@ def get_n_amp_from_n_phase(n):
     """
     return int( np.round(2.4e-3*(n**2)+14) )
     
-def get_pca_bases(base_tensor, return_only_xvar = False, plus_cross = False, qs = None, plotting=True, length=2048, mode=None):
+def get_pca_bases(base_tensor, return_only_xvar = False, plus_cross = False, qs = None, plotting=True, length=2048):
 
     
     
@@ -402,7 +402,7 @@ def get_pca_bases(base_tensor, return_only_xvar = False, plus_cross = False, qs 
     pca_1.fit(base_tensor[:10000,:length])
     pca_2 = PCA(n_components = 70) 
     pca_2.fit(base_tensor[:10000,length:])
-    mms, orig, recon = plot_hist_reconstruct(pca_1, pca_2, base_tensor[10000:].clone(), qs = qs[10000:], plotting=plotting, mode=mode)
+    mms, orig, recon = plot_hist_reconstruct(pca_1, pca_2, base_tensor[10000:].clone(), qs = qs[10000:], plotting=plotting)
 
     mms_ncs.append(mms)
     # mm_max = mms.max()
@@ -424,7 +424,7 @@ def get_pca_bases(base_tensor, return_only_xvar = False, plus_cross = False, qs 
         plt.ylabel(r'Reconstruction max $\mathfrak{M}$')
         # np.save(f'plots/ncs_{args.mode}.npy', ncs)
         # np.save(f'plots/mms_{args.mode}.npy', mms_ncs)
-        plt.savefig(os.path.join(PLOTS_FOLDER, f'ncs_{mode}.png'), dpi=300)
+        plt.savefig(os.path.join(PLOTS_FOLDER, f'ncs.png'), dpi=300)
         plt.close()
         min_all_mms = np.min([x[x>0].min() for x in mms_ncs])
         max_all_mms = mms_ncs.max()
@@ -435,7 +435,7 @@ def get_pca_bases(base_tensor, return_only_xvar = False, plus_cross = False, qs 
         # plt.xscale('symlog', linthresh=max(min_all_mms.min(), 1e-16))
         # plt.yscale('symlog', linthresh=max(min_all_mms.min(), 1e-16))
         plt.legend()
-        plt.savefig(os.path.join(PLOTS_FOLDER, 'data', f'mms_nc_violin_{mode}.png'), dpi=300)
+        plt.savefig(os.path.join(PLOTS_FOLDER, 'data', f'mms_nc_violin.png'), dpi=300)
         plt.close()
         
         print('   PCA components: ', pca_1.n_components_, pca_2.n_components_)
@@ -444,7 +444,7 @@ def get_pca_bases(base_tensor, return_only_xvar = False, plus_cross = False, qs 
         plt.figure()
         plt.plot(orig[mms.argmax()].cpu().numpy())
         plt.plot(recon[mms.argmax()].cpu().numpy())
-        plt.savefig(os.path.join(PLOTS_FOLDER, f'worst_recon_{mode}.png'), dpi=300)
+        plt.savefig(os.path.join(PLOTS_FOLDER, f'worst_recon.png'), dpi=300)
         plt.title(f'{mm_max:.2e}')
         plt.close()
     pca_1_torch = tensor(pca_1.components_)
@@ -456,7 +456,7 @@ def get_pca_bases(base_tensor, return_only_xvar = False, plus_cross = False, qs 
     xvar_a = tensor(pca_1.explained_variance_ratio_)
     xvar_p= tensor(pca_2.explained_variance_ratio_)
     xvar = torch.cat([xvar_a, xvar_p ])
-    plot_hist_reconstruct(pca_1, pca_2, base_tensor.clone(), qs=qs, plotting = plotting, mode = mode)
+    plot_hist_reconstruct(pca_1, pca_2, base_tensor.clone(), qs=qs, plotting = plotting)
     if return_only_xvar:
         return xvar
     return pca_1_torch, pca_1_means, pca_2_torch, pca_2_means
@@ -476,7 +476,7 @@ def find_best_lr(model, optimizer, train_dl, criterion = None, ax = None):
 def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, mode='all', plotting=True, verbose = True):
     # raise Exception('Implement me')
     print('Training model')
-    odd_m = mode in [1,2]
+    odd_m = False
     bestloss = float('inf')
     worst_mm = float('inf')
     if scheduler is not None:
@@ -613,7 +613,7 @@ def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, 
                         plt.yscale( 'log' )
                         plt.title(f'Worst MM: {worst_mm:.2e} @ {best_ep}')
                         plt.legend()
-                        plt.savefig(os.path.join(PLOTS_FOLDER, f'mm_hist_rolling_{mode}.png'), dpi=300)
+                        plt.savefig(os.path.join(PLOTS_FOLDER, f'mm_hist_rolling.png'), dpi=300)
                         plt.close()
                         
                         #plot the worst waveform reconstruction
@@ -622,14 +622,14 @@ def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, 
                         plt.plot( to_wave( outputs_valid )[mm_loss_valid.argmax()].detach().cpu(), label='NN prediction' )
                         plt.legend()
                         plt.title(f'Worst MM: {worst_mm:.2e} @ {best_ep}, params: {vy.detach().cpu().numpy()[mm_loss_valid.argmax()]}')
-                        plt.savefig(os.path.join(PLOTS_FOLDER, f'worst_recon_mm_{mode}.png'), dpi=300)
+                        plt.savefig(os.path.join(PLOTS_FOLDER, f'worst_recon_mm.png'), dpi=300)
                         
                         plt.figure()
                         plt.scatter((mm_loss_valid*v_wave_power).detach().cpu().numpy(), qs.cpu().numpy(), s=0.1, alpha=0.5)
                         plt.xscale('log')
                         plt.xlabel(r'$1-\mathcal{O}$')
                         plt.ylabel(r'$q$')
-                        plt.savefig(os.path.join(PLOTS_FOLDER, 'rolling', f'NN_rescaled_mm_vs_q_{mode}.png'), dpi=300)
+                        plt.savefig(os.path.join(PLOTS_FOLDER, 'rolling', f'NN_rescaled_mm_vs_q.png'), dpi=300)
                         plt.close()
                         
                         plt.figure()
@@ -637,7 +637,7 @@ def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, 
                         plt.xscale('log')
                         plt.xlabel(r'$1-\mathcal{O}$')
                         plt.ylabel(r'$q$')
-                        plt.savefig(os.path.join(PLOTS_FOLDER, 'rolling', f'NN_mm_vs_q_{mode}.png'), dpi=300)
+                        plt.savefig(os.path.join(PLOTS_FOLDER, 'rolling', f'NN_mm_vs_q.png'), dpi=300)
                         plt.close()
                     # torch.save(bestmodel_weights, 'model.pt')
                 else:
@@ -663,7 +663,7 @@ def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, 
                         plt.legend()
                         plt.xlabel('Epoch')
                         plt.ylabel('Loss')
-                        plt.savefig(os.path.join(PLOTS_FOLDER, f'losses_{mode}.png'), dpi=300)
+                        plt.savefig(os.path.join(PLOTS_FOLDER, f'losses.png'), dpi=300)
                         plt.close()
     except KeyboardInterrupt:
         print('Execution interrupted. Wrapping up...')
@@ -722,7 +722,7 @@ if __name__ == "__main__":
     import argparse
     # Create the argument parser
     parser = argparse.ArgumentParser(description='Train decoders for an individual mode.')
-    parser.add_argument('--mode', type=int, help='Which mode to use')
+    # parser.add_argument('--mode', type=int, help='Which mode to use')
     print('Parsing arguments')
     # Parse the arguments
     args = parser.parse_args()
@@ -730,7 +730,7 @@ if __name__ == "__main__":
     # Setup device depending on CUDA availability
     try:
         torch.tensor(0).cuda()
-        device=f'cuda:{args.mode}'
+        device=f'cuda'
     except Exception as e:
         print('Warning: CUDA not available.')
         print(e)
@@ -746,14 +746,14 @@ if __name__ == "__main__":
     #     sys.stderr = f  # Redirect stderr to the file
     print('Running main')
     
-    odd_m = args.mode in [1,2]
+    # odd_m = args.mode in [1,2]
     # %%
     length = 2048
     # base_tensor, base_params_q, base_valid, base_valid_params_q = setup_data_from_file(
     #     'data/NRSur7dq4_dataset_q6_4modes_deucalion_1M.hdf', length = length, mode = args.mode,
     #     )
     base_tensor, base_params_q, base_valid, base_valid_params_q = setup_data_from_file(
-        f'{DATA_FOLDER}/NRHybSur3dq8_dataset.hdf', length = length, mode = args.mode,
+        f'{DATA_FOLDER}/NRHybSur3dq8_dataset.hdf', length = length,
         )
     
     # get_pca_bases(base_tensor)
@@ -773,7 +773,7 @@ if __name__ == "__main__":
     base_valid_params_q[...,0] = 1/base_valid_params_q[...,0] if base_valid_params_q[...,0].min() >= 1 else base_valid_params_q[...,0]
     # model = Decoder(latent_dim, *get_pca_bases(base_tensor, qs = qs, plotting=True, mode = args.mode), 
     #                 layers = [2**8, 2**10, 2**9], act_fn = torch.nn.GELU)
-    model = Decoder(latent_dim, *get_pca_bases(base_tensor, qs = qs, plotting=True, mode = args.mode), 
+    model = Decoder(latent_dim, *get_pca_bases(base_tensor, qs = qs, plotting=True), 
                     layers = [2**6, 2**9, 2**10], act_fn = torch.nn.ReLU, device = device)
     
     train_ds = MyDataset(base_params_q.to(model.device).float(), base_tensor.to(model.device).float())
@@ -817,7 +817,7 @@ if __name__ == "__main__":
     n_epochs = 10_000
     # model = torch.compile(model, mode='max-autotune')
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau
-    train_net(model, optimizer, train_dl, val_dl,  n_epochs, scheduler=scheduler, mode = args.mode)                        
+    train_net(model, optimizer, train_dl, val_dl,  n_epochs, scheduler=scheduler)                        
 
     torch.save(model.state_dict(), os.path.join(MODELS_FOLDER, f'decoder.pt'))
     # og_wave = to_wave(vwf)

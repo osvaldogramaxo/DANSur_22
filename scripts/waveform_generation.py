@@ -68,18 +68,12 @@ if __name__ == "__main__":
     import argparse
     # Create the argument parser
     parser = argparse.ArgumentParser(description='Generate and save data to an HDF5 file.')
-    parser.add_argument('--modes', type=str, help='Iteration')
     parser.add_argument('--sur', type=str, help='Surrogate name', default='NRSur7dq4')
     
     
     # Parse the arguments
     args = parser.parse_args()
-    modes_str = args.modes
     sur_name = args.sur
-    # transform string of form '[(a,b),(c,d),...]' to list of tuples
-    modes = eval(modes_str)
-    assert(type(modes) == list)
-    assert(len(modes[0]) == 2)
-    print('Starting generation with following modes:', modes)
+
     # Call the generate_data_ng function with the file_path argument
-    generate_dataset(priors, modes, sur_name)
+    generate_dataset(priors, sur_name)

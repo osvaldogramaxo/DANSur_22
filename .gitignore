@@ -23,7 +23,7 @@ logs/
 data/
 models/
 *.log
-*.h5
+# *.h5
 *.hdf
 *.hdf5
 
