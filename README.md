@@ -6,12 +6,15 @@ This project implements neural network-based surrogate modeling for gravitationa
 
 ```
 .
-├── data/           # Dataset storage (excluded from git)
-├── logs/           # Training and evaluation logs
-├── models/         # Saved model checkpoints
-├── plots/          # Generated visualizations
-├── pretrain_files/ # Pretraining related files
-├── scripts/        # Python scripts
+├── comparison_plots/      # Directory for model comparison visualizations
+├── data/                  # Dataset storage (excluded from git)
+├── kfold_models/          # Directory for k-fold cross-validation model checkpoints
+├── kfold_plots/           # Directory for k-fold cross-validation visualizations
+├── logs/                  # Training and evaluation logs
+├── models/                # Saved model checkpoints
+├── plots/                 # Generated visualizations
+├── pretrain_files/        # Pretraining related files
+├── scripts/               # Python scripts
 │   ├── __init__.py
 │   ├── pretrain_22.py
 │   ├── sxs_finetune.py
@@ -20,7 +23,7 @@ This project implements neural network-based surrogate modeling for gravitationa
 │   ├── train_decoder_ensemble.py
 │   ├── utils.py
 │   └── waveform_generation_multimode.py
-└── submission/     # SLURM job submission scripts
+└── submission/            # SLURM job submission scripts
 ```
 
 ## Setup
@@ -32,13 +35,7 @@ conda activate torch
 ```
 
 ### Option 2: Manual Installation with pip
-1. Create and activate conda environment:
-```bash
-conda create -n torch python=3.9
-conda activate torch
-```
 
-2. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
@@ -46,15 +43,19 @@ pip install -r requirements.txt
 ## Usage
 
 ### Waveform Generation
-To generate waveforms with specific modes:
+To generate waveforms:
 ```bash
-python -m scripts.waveform_generation_multimode --modes "[(2,2), (3,3)]" --sur NRSur7dq4
+python -m scripts.waveform_generation_multimode  --sur (NRSur7dq4 or NRHybSur3dq8)
 ```
 
 ### Training
 - Pretraining: `python -m scripts.pretrain_22`
 - Fine-tuning: `python -m scripts.sxs_finetune_kfold`
 - Training decoder ensemble: `python -m scripts.train_decoder_ensemble`
+
+### Model Comparison
+- View model comparisons in the `comparison_plots` directory
+- K-fold cross-validation results in `kfold_plots`
 
 ### SLURM Job Submission
 For cluster submission, use the scripts in the `submission` directory:
@@ -71,10 +72,7 @@ This project uses:
 - K-fold cross-validation for model training
 - Custom loss functions for waveform optimization
 
-## Contributing
-
-Please add new scripts to the appropriate directories and update the README with any new functionality.
+Results are published in [arXiv:2412.06946](https://arxiv.org/abs/2412.06946v1)
 
 ## License
 This project is licensed under the Creative Commons Attribution 4.0 International License. To view a copy of this license, visit <http://creativecommons.org/licenses/by/4.0/>.
-
