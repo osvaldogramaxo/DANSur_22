@@ -22,7 +22,7 @@ This project implements neural network-based surrogate modeling for gravitationa
 │   ├── sxs_utils.py
 │   ├── train_decoder_ensemble.py
 │   ├── utils.py
-│   └── waveform_generation_multimode.py
+│   └── waveform_generation.py
 └── submission/            # SLURM job submission scripts
 ```
 
