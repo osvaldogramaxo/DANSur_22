@@ -18,6 +18,12 @@ ENV/
 *.swp
 *.swo
 
+# plots and logs
+*.png
+*.pdf
+*.log
+
+
 # Logs and Datasets
 # logs/
 # data/
