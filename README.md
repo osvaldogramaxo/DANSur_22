@@ -45,7 +45,7 @@ pip install -r requirements.txt
 ### Waveform Generation
 To generate waveforms:
 ```bash
-python -m scripts.waveform_generation_multimode  --sur (NRSur7dq4 or NRHybSur3dq8)
+python -m scripts.waveform_generation  --sur (NRSur7dq4 or NRHybSur3dq8)
 ```
 
 ### Training
