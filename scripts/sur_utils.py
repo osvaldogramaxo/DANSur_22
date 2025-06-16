@@ -4,7 +4,6 @@ import warnings
 import gwtools as _gwtools
 import numpy as np
 from gwtools import gwutils as _gwutils
-from matplotlib import pyplot as plt
 from gwsurrogate import SurrogateEvaluator
 class NNSur(SurrogateEvaluator):
     
@@ -54,7 +53,7 @@ class NNSur(SurrogateEvaluator):
         # NNSurModel = torch.export.load('exp_program.pt2')
         # return NNSurModel.module()
         
-        NNSurModel = torch.jit.load('mock_decoder_jit_cpu.pt', map_location='cpu')
+        NNSurModel = torch.jit.load('NNSur.pt', map_location='cpu')
         return NNSurModel
     def _get_intrinsic_parameters(self, q, chiA0, chiB0, precessing_opts,
             tidal_opts, par_dict):
@@ -571,8 +570,6 @@ class NNSur(SurrogateEvaluator):
         # print('Post-scale', domain[0], domain[-1])
         domain = domain - domain[0] 
         domain = domain.astype(float)
-        # plt.figure()
-        # plt.plot(domain, h.real)
         
         # interpd_h = {}
         # for mode, hlm in h.items():
