@@ -1,4 +1,4 @@
-# Gravitational Wave Neural Network Surrogate Modeling
+# Dual-stage Artificial Neural Surrogate
 
 This project implements neural network-based surrogate modeling for gravitational wave signals, specifically focusing on 22-mode waveform approximation.
 
