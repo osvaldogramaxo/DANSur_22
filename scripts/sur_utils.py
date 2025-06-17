@@ -1,5 +1,6 @@
 import gwsurrogate
 import torch
+import os
 import warnings
 import gwtools as _gwtools
 import numpy as np
@@ -50,7 +51,7 @@ class DANSur(SurrogateEvaluator):
         See NRHybSur3dq8 for an example.
         """
         
-        DANSurModel = torch.jit.load('DANSur.pt', map_location='cpu')
+        DANSurModel = torch.jit.load(os.path.dirname(__file__)+'/DANSur.pt', map_location='cpu')
         return DANSurModel
     def _get_intrinsic_parameters(self, q, chiA0, chiB0, precessing_opts,
             tidal_opts, par_dict):
