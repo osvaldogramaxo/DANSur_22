@@ -21,7 +21,7 @@ ENV/
 # plots and models
 *.png
 *.pdf
-*.pt
+# *.pt
 
 
 # Logs and Datasets

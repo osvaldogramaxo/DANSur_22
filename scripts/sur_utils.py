@@ -5,7 +5,7 @@ import gwtools as _gwtools
 import numpy as np
 from gwtools import gwutils as _gwutils
 from gwsurrogate import SurrogateEvaluator
-class NNSur(SurrogateEvaluator):
+class DANSur(SurrogateEvaluator):
     
     def __init__(self, modes_list = [(2, 2)], device='cpu'):
         """
@@ -15,7 +15,7 @@ class NNSur(SurrogateEvaluator):
         following gwsurrogate convention, the user can pass only the z-components of the spins as a float or np.ndarray of shape (N,). The output is a dictionary
         of the waveform modes, where the keys are the mode tuple (l, m) and the values are the complex numpy arrays of the waveform modes, of shape (N, 2048).
         """
-        self.name = 'NRSurNN3dq8'
+        self.name = 'DANSur'
 
         # load the dimensionless surrogate
         self._sur_dimless = self._load_dimless_surrogate()
@@ -49,12 +49,9 @@ class NNSur(SurrogateEvaluator):
         passed to self._sur_dimless() in the __call__ function of this class.
         See NRHybSur3dq8 for an example.
         """
-        # raise NotImplementedError("Please override me.")
-        # NNSurModel = torch.export.load('exp_program.pt2')
-        # return NNSurModel.module()
         
-        NNSurModel = torch.jit.load('NNSur.pt', map_location='cpu')
-        return NNSurModel
+        DANSurModel = torch.jit.load('DANSur.pt', map_location='cpu')
+        return DANSurModel
     def _get_intrinsic_parameters(self, q, chiA0, chiB0, precessing_opts,
             tidal_opts, par_dict):
         """
