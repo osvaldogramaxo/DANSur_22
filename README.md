@@ -51,7 +51,6 @@ python -m scripts.waveform_generation  --sur (NRSur7dq4 or NRHybSur3dq8)
 ### Training
 - Pretraining: `python -m scripts.pretrain_22`
 - Fine-tuning: `python -m scripts.sxs_finetune_kfold`
-- Training decoder ensemble: `python -m scripts.train_decoder_ensemble`
 
 ### Model Comparison
 - View model comparisons in the `comparison_plots` directory
