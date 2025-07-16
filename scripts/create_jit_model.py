@@ -1,5 +1,8 @@
 # %%
-from utils import torch, sxs, amp_phase_to_wave, tensor, np, Decoder, Decoder2
+# from utils import amp_phase_to_wave, tensor, np, Decoder, Decoder2
+import torch
+from torch import nn
+from scripts.utils import Decoder
 # %%
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 #check for cuda
@@ -11,9 +14,9 @@ if device == 'cuda':
         print('CUDA unavailable, falling back to cpu')
         device='cpu'
 layers = [2**6,2**9,2**10]
-state_dict = torch.load(f'kfold_models/decoder_kfold.pt', map_location=device)
+state_dict = torch.load(f'sxs_kfold_NRHybSur3dq8/models/decoder_kfold.pt', map_location=device)
 amp_basis, amp_mean, phase_basis, phase_mean = state_dict['amp_basis'], state_dict['amp_mean'], state_dict['phase_basis'], state_dict['phase_mean']
-_model = Decoder(3, amp_basis, amp_mean, phase_basis, phase_mean, device=device, layers=layers, act_fn=nn.ReLU)
+_model = Decoder(3, amp_basis, amp_mean, phase_basis, phase_mean, device=device, layers=layers, act_fn=nn.GELU)
 _model.load_state_dict(state_dict)
 _model.float()
 _model.eval()
@@ -21,4 +24,4 @@ _model.eval()
 with torch.inference_mode():
     scripted_model = torch.jit.script(_model)
     scripted_model = torch.jit.optimize_for_inference(scripted_model)
-    torch.jit.save(scripted_model, f'DANSur.pt')
+    torch.jit.save(scripted_model, f'DANSur_v2.pt')

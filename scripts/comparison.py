@@ -19,6 +19,10 @@ import pytorch_optimizer as topt
 import subprocess
 import time
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+try:
+    torch.tensor([1]).to(device)
+except:
+    device = 'cpu'
 print(f'Using device: {device}')
 #%%
 def get_test_mms(model, test_dl):
@@ -116,7 +120,7 @@ state_dict = torch.load(f'pretrain_files/models/decoder.pt', map_location=device
 amp_basis, amp_mean, phase_basis, phase_mean = state_dict['amp_basis'], state_dict['amp_mean'], state_dict['phase_basis'], state_dict['phase_mean']
 
 #%%
-ds = SXSDataset('../sxs/sxs_waves_4modes.h5', modes = [(2,2), (3,3),(2,1), (4,4)])
+ds = SXSDataset('./data/sxs_waveforms.h5', modes = [(2,2)])
 filt =  (abs(ds.waveform_data[:,0,-1]) < 1e-2)*\
         (ds.params_data[:,0] >= 1/8)*\
         (abs(ds.params_data[:,1]) <= .8)*\

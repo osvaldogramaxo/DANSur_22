@@ -216,7 +216,7 @@ class MyLoss(nn.Module):
         self.odd_m = odd_m
 
     def forward(self, outputs, wf):
-        # print(outputs.shape, wf.shape)
+        print(outputs.shape, wf.shape)
         
         wf = wf.to(self.model.device)
         data_pcs = self.model.PCA(wf )
@@ -241,7 +241,8 @@ class MyLoss(nn.Module):
         asd_loss = ASDL1Loss()(wf_wave, outputs_wave)
         # print('DEBUG: LOSS COMPONENTS', torch.log10( (mm_loss*wave_power).mean()  ),'&', rec_loss,'&', power_diff.mean())
         loss = torch.log10( (mm_loss*wave_power).mean()  ) + \
-                (rec_loss) + (power_diff.mean()) #+ torch.log10(asd_loss)
+                (rec_loss).mean() + (power_diff).mean() #+ torch.log10(asd_loss)
+        print(loss)
         return loss
 
 def setup_data_from_file(filepath, length = 2048, mode=None, plus_cross = False, plotting = True, N=None):
@@ -374,38 +375,34 @@ def get_n_amp_from_n_phase(n):
     """
     return int( np.round(2.4e-3*(n**2)+14) )
     
-def get_pca_bases(base_tensor, return_only_xvar = False, plus_cross = False, qs = None, plotting=True, length=2048, mode=None):
+def get_pca_bases(base_tensor, return_only_xvar = False, plus_cross = False, qs = None, plotting=True, length=2048, PLOTS_FOLDER = None):
 
     
     
     PHASE_FLAG = False
     # init_exp = -5
-    nc = 90
+    nc = 70
     ncs = []
     mms_ncs = []
     mms_p_ncs = []
-    while not PHASE_FLAG:
-        # print('DEBUG: BASE SHAPE:', base_tensor.cpu().numpy().shape)
-        # print('DEBUG: MASK SHAPE:', qmask.cpu().numpy().shape)
-        # print('DEBUG: PCA INPUT SHAPE:', base_tensor[:5000,:length].cpu().numpy().shape)
-        ncs.append(nc)
-        pca_1 = PCA(n_components = get_n_amp_from_n_phase(nc) )
-        pca_1.fit(base_tensor[:10000,:length])
-        pca_2 = PCA(n_components = nc) 
-        pca_2.fit(base_tensor[:10000,length:])
-        mms, orig, recon = plot_hist_reconstruct(pca_1, pca_2, base_tensor[10000:].clone(), qs = qs[10000:], plotting=plotting, mode=mode)
+    # print('DEBUG: BASE SHAPE:', base_tensor.cpu().numpy().shape)
+    # print('DEBUG: MASK SHAPE:', qmask.cpu().numpy().shape)
+    # print('DEBUG: PCA INPUT SHAPE:', base_tensor[:5000,:length].cpu().numpy().shape)
+    ncs.append(nc)
+    # pca_1 = PCA(n_components = get_n_amp_from_n_phase(nc) )
+    pca_1 = PCA(n_components = 30 )
+    pca_1.fit(base_tensor[:10000,:length])
+    pca_2 = PCA(n_components = 70) 
+    pca_2.fit(base_tensor[:10000,length:])
+    mms, orig, recon = plot_hist_reconstruct(pca_1, pca_2, base_tensor[:].clone(), plotting=plotting)
+
+    mms_ncs.append(mms)
+    # mm_max = mms.max()
     
-        mms_ncs.append(mms)
-        # mm_max = mms.max()
-        
-        mms_power_weighted = mms*( get_wave_power(base_tensor[10000:]).cpu().numpy()**2 )
-        mms_p_ncs.append(mms_power_weighted)
-        mm_max = mms_power_weighted.max()
-        # print(f'MAX MM: {mm_max:.2e}')
-        if (mm_max < 1e-4) or (pca_2.n_components_ >= 150):
-            PHASE_FLAG = True
-        else:
-            nc += 20
+    mms_power_weighted = mms*( get_wave_power(base_tensor[:]).cpu().numpy()**2 )
+    mms_p_ncs.append(mms_power_weighted)
+    mm_max = mms_power_weighted.max()
+
     print(f'MAX MM: {mm_max:.2e}')
     ncs = np.array(ncs)
     mms_ncs = np.array(mms_ncs)
@@ -419,7 +416,7 @@ def get_pca_bases(base_tensor, return_only_xvar = False, plus_cross = False, qs 
         plt.ylabel(r'Reconstruction max $\mathfrak{M}$')
         # np.save(f'plots/ncs_{args.mode}.npy', ncs)
         # np.save(f'plots/mms_{args.mode}.npy', mms_ncs)
-        plt.savefig(f'plots/ncs_{mode}.png', dpi=300)
+        plt.savefig(os.path.join(PLOTS_FOLDER, f'ncs.png'), dpi=300)
         plt.close()
         min_all_mms = np.min([x[x>0].min() for x in mms_ncs])
         max_all_mms = mms_ncs.max()
@@ -430,7 +427,7 @@ def get_pca_bases(base_tensor, return_only_xvar = False, plus_cross = False, qs 
         # plt.xscale('symlog', linthresh=max(min_all_mms.min(), 1e-16))
         # plt.yscale('symlog', linthresh=max(min_all_mms.min(), 1e-16))
         plt.legend()
-        plt.savefig(f'plots/data/mms_nc_violin_{mode}.png', dpi=300)
+        plt.savefig(os.path.join(PLOTS_FOLDER, 'data', f'mms_nc_violin.png'), dpi=300)
         plt.close()
         
         print('   PCA components: ', pca_1.n_components_, pca_2.n_components_)
@@ -439,22 +436,23 @@ def get_pca_bases(base_tensor, return_only_xvar = False, plus_cross = False, qs 
         plt.figure()
         plt.plot(orig[mms.argmax()].cpu().numpy())
         plt.plot(recon[mms.argmax()].cpu().numpy())
-        plt.savefig(f'plots/worst_recon_{mode}.png', dpi=300)
+        plt.savefig(os.path.join(PLOTS_FOLDER, f'worst_recon.png'), dpi=300)
         plt.title(f'{mm_max:.2e}')
         plt.close()
-    pca_1_torch = tensor(pca_1.components_).float()
-    pca_2_torch = tensor(pca_2.components_).float()
+    pca_1_torch = tensor(pca_1.components_)
+    pca_2_torch = tensor(pca_2.components_)
 
-    pca_1_means = tensor(pca_1.mean_).float()
-    pca_2_means = tensor(pca_2.mean_).float()
+    pca_1_means = tensor(pca_1.mean_)
+    pca_2_means = tensor(pca_2.mean_)
     
-    xvar_a = tensor(pca_1.explained_variance_ratio_).float()
-    xvar_p= tensor(pca_2.explained_variance_ratio_).float()
+    xvar_a = tensor(pca_1.explained_variance_ratio_)
+    xvar_p= tensor(pca_2.explained_variance_ratio_)
     xvar = torch.cat([xvar_a, xvar_p ])
-    plot_hist_reconstruct(pca_1, pca_2, base_tensor.clone(), qs=qs, plotting = plotting, mode = mode)
+    plot_hist_reconstruct(pca_1, pca_2, base_tensor.clone(), qs=qs, plotting = plotting)
     if return_only_xvar:
         return xvar
     return pca_1_torch, pca_1_means, pca_2_torch, pca_2_means
+
 
 # def get_svd_bases(base_tensor):
 #     svd_a = TruncatedSVD(n_components = 30)
@@ -464,7 +462,7 @@ def get_pca_bases(base_tensor, return_only_xvar = False, plus_cross = False, qs 
 #     svd_p.fit(base_tensor.cpu().numpy()[:,length:][:])
     
 
-#     svd_a_torch = tensor(svd_a.components_).float()
+#     svd_a_torch = tensor(svd_a.components_).float()397
 #     svd_p_torch = tensor(svd_p.components_).float()
 
 #     svd_a_means = 0.

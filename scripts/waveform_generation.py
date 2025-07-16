@@ -1,5 +1,6 @@
 # %%
 import h5py
+import pyseobnr
 import numpy as np
 # from tsai.basics import *
 import bilby
@@ -43,7 +44,7 @@ waveform_generator = bilby.gw.WaveformGenerator(
 priors = bilby.gw.prior.BBHPriorDict(
     dict(
         # Prior for the mass ratio
-        mass_ratio=Uniform(1, 4),
+        mass_ratio=Uniform(1, 8),
         # Prior for the total mass
         total_mass=1.0,
         # Prior for the spin parameter of the first black hole

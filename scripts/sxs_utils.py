@@ -101,8 +101,8 @@ class SXSDataset(Dataset):
         return self.data_len
 
     def __getitem__(self, idx):
-        return (torch.tensor(self.params_data[idx]), 
-        torch.tensor(self.waveform_data[idx])
+        return (torch.tensor(self.params_data[idx]).double(), 
+        torch.tensor(self.waveform_data[idx]).double()
         )
         
     

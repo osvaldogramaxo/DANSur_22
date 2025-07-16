@@ -18,19 +18,27 @@ import pytorch_optimizer as topt
 import subprocess
 import time
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+try:
+    torch.tensor([1.]).cuda()
+except:
+    print('CUDA unavailable, falling back to cpu')
+    device='cpu'
 print(f'Using device: {device}')
 #%%
 
-def find_best_lr(model, optimizer, train_dl, device = 'cuda', criterion = None, ax = None):
+def find_best_lr(model, optimizer, train_dl, device = device, criterion = None, ax = None):
         lr_finder = LRFinder(model, optimizer, criterion, device=device)
-        lr_finder.range_test(train_dl, num_iter=100,start_lr=1e-5, end_lr=3e-3, diverge_th=5, step_mode='exp', smooth_f = 0.05)
+        lr_finder.range_test(train_dl, num_iter=100,start_lr=1e-8, end_lr=3e-2, diverge_th=1/5, step_mode='exp', smooth_f = 0.05)
+        # breakpoint()
+        # print(lr_finder.history['loss'])
         if ax is not None:
             lr_finder.plot(ax = ax)
-        lr_finder.reset() # to reset the model and optimizer to their initial state
         losses = lr_finder.history['loss']
         min_grad_idx = (np.gradient(np.array(losses))).argmin()
         min_idx = np.array(losses).argmin()
-        best_lr = lr_finder.history['lr'][min_idx]
+        best_lr = lr_finder.history['lr'][min_grad_idx]
+        
+        lr_finder.reset() # to reset the model and optimizer to their initial state
         return best_lr
 class SXSLoss(nn.Module):
     def __init__(self, modes, device = 'cpu'):
@@ -39,10 +47,10 @@ class SXSLoss(nn.Module):
         self.device = device
     def forward(self, pred, wf):
         
-        wf_wave = (wf).to(self.device)
+        wf_wave = to_wave(wf)
         outputs_wave = to_wave(pred)
         # print(wf_wave.shape, outputs_wave.shape)
-        breakpoint()
+        # breakpoint()
         mm_loss = mymismatch( outputs_wave,  wf_wave )
         mm_loss = torch.nan_to_num(mm_loss)
         wave_power = 1
@@ -90,11 +98,9 @@ class _RepeatSampler(object):
 
 
 time_limit = 60 * 60*48 # Number of seconds in one minute
-np.random.seed(32) # For reproducibility. 32 is the founding year of Portugal, 42 was already taken
+np.random.seed(32) # For reproducibility. 42 was already taken
 torch.manual_seed(32)
 #%%
-state_dict = torch.load(f'pretrain_files/models/decoder.pt', map_location=device)
-amp_basis, amp_mean, phase_basis, phase_mean = state_dict['amp_basis'], state_dict['amp_mean'], state_dict['phase_basis'], state_dict['phase_mean']
 
 
                     
@@ -125,7 +131,7 @@ def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, 
         best_ep = 0
         # iter_num = -1
         # k=10
-        early_stopping = EarlyStopping(patience=1000, verbose=False, delta=1e-2)
+        early_stopping = EarlyStopping(patience=200, verbose=False, delta=1e-2)
         # if verbose:
         #     verb_range = trange(num_epochs)
         # else:
@@ -226,7 +232,7 @@ def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, 
                         # plt.yscale( 'log' )
                         plt.title(f'Worst MM: {worst_mm:.2e} @ {best_ep}')
                         plt.legend()
-                        plt.savefig(f'kfold_plots/rolling/sxs_mm_hist_rolling_summed.png', dpi=300)
+                        plt.savefig(f'{PLOTS_FOLDER}/rolling/sxs_mm_hist_rolling_summed.png', dpi=300)
                         plt.close()
                         
                         #plot the worst waveform reconstruction
@@ -235,14 +241,14 @@ def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, 
                         plt.plot( outputs_wave_valid[mm_loss_valid.argmax()].detach().cpu(), label='NN prediction' )
                         plt.legend()
                         plt.title(f'Worst MM: {worst_mm:.2e} @ {best_ep}, params: {vy.detach().cpu().numpy()[mm_loss_valid.argmax()]}')
-                        plt.savefig(f'kfold_plots/rolling/sxs_worst_recon_mm_summed.png', dpi=300)
+                        plt.savefig(f'{PLOTS_FOLDER}/rolling/sxs_worst_recon_mm_summed.png', dpi=300)
                         
                         plt.figure()
                         plt.scatter((mm_loss_valid).detach().cpu().numpy(), qs.cpu().numpy(), s=1, alpha=0.9)
                         plt.xscale('log')
                         plt.xlabel(r'$\mathfrak{M}$')
                         plt.ylabel(r'$q$')
-                        plt.savefig(f'kfold_plots/rolling/sxs_NN_rescaled_mm_vs_q_summed.png', dpi=300)
+                        plt.savefig(f'{PLOTS_FOLDER}/rolling/sxs_NN_rescaled_mm_vs_q_summed.png', dpi=300)
                         plt.close()
 
                     # torch.save(bestmodel_weights, 'model.pt')
@@ -261,7 +267,7 @@ def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, 
                 train_losses.append(loss.item())
                 val_losses.append(val_loss.item())
                 if (epoch % 10 == 0):
-                    torch.save(bestmodel_weights, f'kfold_models/rolling/decoder_kfold.pt')
+                    torch.save(bestmodel_weights, f'{MODELS_FOLDER}/rolling/decoder_kfold.pt')
                     if plotting:
                         plt.figure()
                         plt.plot(train_losses, label='train')
@@ -269,15 +275,16 @@ def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, 
                         plt.legend()
                         plt.xlabel('Epoch')
                         plt.ylabel('Loss')
-                        plt.savefig(f'kfold_plots/losses_summed.png', dpi=300)
+                        plt.savefig(f'{PLOTS_FOLDER}/losses_summed.png', dpi=300)
                         plt.close()
                 
     except KeyboardInterrupt:
         print('Execution interrupted. Wrapping up...')
-        pass
+        raise KeyboardInterrupt
+        # pass
         # Save the best model
     # if plotting:
-    torch.save(bestmodel_weights, f'kfold_models/decoder_kfold.pt')
+    torch.save(bestmodel_weights, f'{MODELS_FOLDER}/decoder_kfold.pt')
     # model.load_state_dict(bestmodel_weights)
     best_mean_mm = np.min(mm_history)
     # # Save losses
@@ -285,167 +292,126 @@ def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, 
     return bestloss, best_mean_mm
 
 
-
-
-
 #%%
-ds = SXSDataset('../sxs/sxs_waves_4modes.h5', modes = [(2,2), (3,3),(2,1), (4,4)])
-filt =  (abs(ds.waveform_data[:,0,-1]) < 1e-2)*\
-        (ds.params_data[:,0] >= 1/8)*\
-        (abs(ds.params_data[:,1]) <= .8)*\
-        (abs(ds.params_data[:,1]) <= .8)*\
-        (abs(ds.waveform_data[:,0,:]).sum(axis=-1)<1000)*\
-        (np.abs(ds.metadata['eccentricity'])<1e-2)
+if __name__ == '__main__':
+    # create necessary folders
+    import argparse
+    parser = argparse.ArgumentParser(description='Train decoders for an individual mode.')
+    parser.add_argument('--approximant', type=str, help='Approximant to use')
+    args = parser.parse_args()
+    approx = args.approximant
+    PARENT_FOLDER = 'sxs_kfold_'+approx
+    PLOTS_FOLDER = PARENT_FOLDER + '/plots'
+    MODELS_FOLDER = PARENT_FOLDER + '/models'
+    os.makedirs(MODELS_FOLDER, exist_ok=True)
+    os.makedirs(MODELS_FOLDER + '/rolling', exist_ok=True)
+    os.makedirs(PLOTS_FOLDER, exist_ok=True)
+    os.makedirs(PLOTS_FOLDER + '/rolling', exist_ok=True)
+    os.makedirs(PLOTS_FOLDER + '/data', exist_ok=True)
 
-ds.waveform_data = abs(ds.waveform_data)*np.exp(1j*get_phases(ds.waveform_data).numpy())
-ds.waveform_data = ds.waveform_data[filt][:,0,:]
-ds.waveform_data = np.concatenate([abs(ds.waveform_data), get_phases(ds.waveform_data)], axis=-1).astype(np.float32)
-ds.params_data = ds.params_data[filt].astype(np.float32)
-ds.data_len = len(ds.waveform_data)
-print('Filtered dataset size:',ds.data_len)
-# Example usage:
-mode_map = {0: (2, 2), 1: (3, 3), 2: (2, 1), 3: (4, 4)}
-mode_map_sxs = {0: (2, 2), 1: (3, 3), 2: (2, 1), 3: (4, 4)}
-# h = np.array([x for k,x in gw.items()]).transpose(1,0,2)
+    ds = SXSDataset('data/sxs_waveforms.h5', modes = [(2,2)])
+    filt =  (abs(ds.waveform_data[:,0,-1]) < 1e-2)*\
+            (ds.params_data[:,0] >= 1/8)*\
+            (abs(ds.params_data[:,1]) <= .8)*\
+            (abs(ds.params_data[:,1]) <= .8)*\
+            (abs(ds.waveform_data[:,0,:]).sum(axis=-1)<1000)*\
+            (np.abs(ds.metadata['eccentricity'])<1e-2)
 
-# h_sphere = cover_forward(torch.from_numpy(h))
-#%%
+    ds.waveform_data = abs(ds.waveform_data)*np.exp(1j*get_phases(ds.waveform_data).numpy())
+    ds.waveform_data = ds.waveform_data[filt][:,0,:]
+    ds.waveform_data = np.concatenate([abs(ds.waveform_data), get_phases(ds.waveform_data)], axis=-1).astype(np.float64)
+    ds.params_data = ds.params_data[filt].astype(np.float64)
+    ds.data_len = len(ds.waveform_data)
+    print('Filtered dataset size:',ds.data_len)
+    # Example usage:
+    mode_map = {0: (2, 2), 1: (3, 3), 2: (2, 1), 3: (4, 4)}
+    mode_map_sxs = {0: (2, 2), 1: (3, 3), 2: (2, 1), 3: (4, 4)}
+    # h = np.array([x for k,x in gw.items()]).transpose(1,0,2)
+    print(tensor(ds.waveform_data))
+    # amp_basis, amp_mean, phase_basis, phase_mean = get_pca_bases(base_tensor = tensor(ds.waveform_data), PLOTS_FOLDER = PLOTS_FOLDER)
+    state_dict = torch.load(f'pretrain_files_{approx}/models/rolling/decoder.pt', map_location=device)
 
-# Split data into 87.5% train and 12.5% test
-train_test_idx, test_idx = np.split(np.random.permutation(len(ds)), [int(len(ds)*0.875)])
-k = 3
-# Split train data into k folds for cross-validation
-kf = KFold(n_splits=k, shuffle=True, random_state=32)
+    amp_basis, amp_mean, phase_basis, phase_mean = state_dict['amp_basis'], state_dict['amp_mean'], state_dict['phase_basis'], state_dict['phase_mean']
 
+    # h_sphere = cover_forward(torch.from_numpy(h))
+    #%%
 
-# Create test dataset
-test_ds = MyDataset(X=ds[test_idx][0], y=ds[test_idx][1], device=device)
-test_dl = MultiEpochsDataLoader(test_ds, batch_size=len(test_ds), shuffle=False)
-layers = [2**6,2**9,2**10]
-# Train 5 models with k-fold cross-validation
-train = True
-if train:
-    for fold, (train_idx, val_idx) in enumerate(kf.split(train_test_idx)):
-        print(f'\nTraining fold {fold+1}/{k}... ')
-        
-        # Create datasets for this fold
-        train_fold_idx = train_test_idx[train_idx]
-        val_fold_idx = train_test_idx[val_idx]
-        
-        train_fold_ds = MyDataset(X=ds[train_fold_idx][0], y=ds[train_fold_idx][1], device=device)
-        val_fold_ds = MyDataset(X=ds[val_fold_idx][0], y=ds[val_fold_idx][1], device=device)
-        
-        train_fold_dl = MultiEpochsDataLoader(train_fold_ds, batch_size=len(train_fold_ds), shuffle=True)
-        val_fold_dl = MultiEpochsDataLoader(val_fold_ds, batch_size=len(val_fold_ds), shuffle=False)
-        
-        # Initialize new model for this fold
-        model = Decoder(3, amp_basis, amp_mean, phase_basis, phase_mean, layers=layers, act_fn=torch.nn.ReLU, device=device)
-        model.load_state_dict(state_dict)
-        model.float()
-        model.train()
-        for param in model.parameters():
-            param.requires_grad = True
-        # for param in list(model.parameters())[:11]:
-        #     param.requires_grad = True
-        # Initialize optimizer and scheduler
-        optclass = topt.load_optimizer('adamw')
-        optimizer = optclass(model.parameters(), lr=1e-3)
-        # try:
-        best_lr = find_best_lr(model, optimizer, train_fold_dl, criterion = MyLoss(model), device = device )
-        print(f'Best LR found is {best_lr:.2e}')
-        # except Exception as e:
-        #     print(e)
-        #     best_lr = 1e-4
-        optimizer = optclass(model.parameters(), lr=best_lr)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau
-        
-        # Train the model
-        best_loss, mean_mm = train_net(model, optimizer, train_fold_dl, val_fold_dl, 10000, 
-                                    plotting=True, verbose=True, scheduler=scheduler)
-        
-        # Save the model weights and loss
-        torch.save(model.state_dict(), f'kfold_models/rolling/decoder_kfold_{fold}.pt')
-        # torch.save({'train_losses': train_losses, 'val_losses': val_losses, 'val_mms': mm_history}, f'kfold_models/rolling/decoder_kfold_{fold}_losses.pt')
-
-        print(f'Fold {fold+1} completed. Best loss: {best_loss:.2e}, Mean MM: {mean_mm:.2e}')
+    # Split data into 87.5% train and 12.5% test
+    train_test_idx, test_idx = np.split(np.random.permutation(len(ds)), [int(len(ds)*0.8)])
+    k = 3
+    # Split train data into k folds for cross-validation
+    kf = KFold(n_splits=k, shuffle=True, random_state=32)
 
 
+    # Create test dataset
+    test_ds = MyDataset(X=ds[test_idx][0], y=ds[test_idx][1], device=device)
+    test_dl = MultiEpochsDataLoader(test_ds, batch_size=len(test_ds), shuffle=False)
+    layers = [2**6,2**9,2**10]
+    # Train 5 models with k-fold cross-validation
+    train = True
+    if train:
+        for fold, (train_idx, val_idx) in enumerate(kf.split(train_test_idx)):
+            print(f'\nTraining fold {fold+1}/{k}... ')
+            
+            # Create datasets for this fold
+            train_fold_idx = train_test_idx[train_idx]
+            val_fold_idx = train_test_idx[val_idx]
+            
+            train_fold_ds = MyDataset(X=ds[train_fold_idx][0], y=ds[train_fold_idx][1], device=device)
+            val_fold_ds = MyDataset(X=ds[val_fold_idx][0], y=ds[val_fold_idx][1], device=device)
+            
+            train_fold_dl = MultiEpochsDataLoader(train_fold_ds, batch_size=len(train_fold_ds), shuffle=True)
+            val_fold_dl = MultiEpochsDataLoader(val_fold_ds, batch_size=len(val_fold_ds), shuffle=False)
+            
+            # Initialize new model for this fold
+            model = Decoder(3, amp_basis, amp_mean, phase_basis, phase_mean, layers=layers, act_fn=torch.nn.GELU, device=device)
+            model.load_state_dict(state_dict)
+            model.double()
+            model.train()
+            for param in model.parameters():
+                param.requires_grad = True
+            # for param in list(model.parameters())[11:]:
+            #     param.requires_grad = False
+            # Initialize optimizer and scheduler
+            optclass = topt.load_optimizer('adamw')
+            optimizer = optclass(model.parameters(), lr=1e-3)
+            # try:
+            fig, ax = plt.subplots()
+            try:
+                best_lr = find_best_lr(model, optimizer, train_fold_dl, criterion = SXSLoss(modes = [(2,2)]), device = device, ax = ax)
+            except Exception as e:
+                print(e)
+                best_lr = 1e-4
+            plt.savefig(f'{PLOTS_FOLDER}/rolling/lr_finder_{fold}.png', dpi=300)
+            print(f'Best LR found is {best_lr:.2e}')
+            optimizer = optclass(model.parameters(), lr=best_lr)
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau
+            
+            # Train the model
+            best_loss, mean_mm = train_net(model, optimizer, train_fold_dl, val_fold_dl, 10000, 
+                                        plotting=True, verbose=True, scheduler=scheduler)
+            
+            # Save the model weights and loss
+            torch.save(model.state_dict(), f'{MODELS_FOLDER}/rolling/decoder_kfold_{fold}.pt')
+            # torch.save({'train_losses': train_losses, 'val_losses': val_losses, 'val_mms': mm_history}, f'{MODELS_FOLDER}/rolling/decoder_kfold_{fold}_losses.pt')
 
-fold_models = [torch.load(f'kfold_models/rolling/decoder_kfold_{fold}.pt', map_location=device) for fold in range(k)]
-# Average the weights of the 5 models
-avg_model = Decoder(3, amp_basis, amp_mean, phase_basis, phase_mean, layers=layers, act_fn=torch.nn.ReLU, device=device)
-for name, param in avg_model.named_parameters():
-    param.data.copy_(torch.stack([model[name] for model in fold_models]).mean(dim=0))
-avg_model.float()
-avg_model.eval()
-
-with torch.no_grad():
-    test_loss = 0
-    mm_loss_test = 0
-    for test_y, test_wf in test_dl:
-        outputs_wave_test = avg_model(test_y.to(device))
-        outputs_wave_test = to_wave(outputs_wave_test)
-        test_wf_wave = to_wave(test_wf).to(device)
-        
-        mm_loss_test = mymismatch(outputs_wave_test, test_wf_wave)
-        test_power = 1
-        power_diff_test = nn.L1Loss()(abs(test_wf_wave).sum(dim=-1), abs(outputs_wave_test).sum(dim=-1))
-        
-        test_loss += torch.log10((mm_loss_test*test_power).mean()) + (power_diff_test.mean())
-    
-    test_loss = test_loss/len(test_dl)
-    mm_loss_test = mm_loss_test/len(test_dl)
-    
-    # Plot mismatch histogram
-    plt.figure()
-    n_bins = 1+np.log2(len(mm_loss_test)).round().astype(int)
-    bins = np.logspace(np.log10(mm_loss_test[mm_loss_test > 0].detach().cpu().numpy().min()), 
-                      np.log10(mm_loss_test[mm_loss_test > 0].detach().cpu().numpy().max()), 
-                      n_bins)
-    
-    if mm_loss_test.min() == 0:
-        bins = np.insert(bins, 0, 0.)
-    
-    plt.hist((mm_loss_test.flatten()*test_power).detach().cpu().numpy(), bins=bins, 
-             histtype='step', color='k')
-    plt.xlabel(r'$\mathfrak{M}$')
-    plt.xscale('symlog' if mm_loss_test.min() == 0 else 'log')
-    plt.title(f'Test Set MM Distribution')
-    plt.savefig(f'kfold_plots/sxs_mm_hist_test.png', dpi=300)
-    plt.close()
-    
-    # Plot MM vs q
-    plt.figure()
-    plt.scatter((mm_loss_test).detach().cpu().numpy(), 1/test_y[:,0].cpu().numpy(), s=2, alpha=0.9)
-    plt.xscale('log')
-    plt.xlabel(r'$\mathfrak{M}$')
-    plt.ylabel(r'$q$')
-    plt.title(f'Test Set MM vs q')
-    plt.savefig(f'kfold_plots/sxs_mm_vs_q_test.png', dpi=300)
-    plt.close()
-
-print(f'\nFinal test loss: {test_loss.item():.2e}')
-# Save the averaged model
-torch.save(avg_model.state_dict(), f'kfold_models/decoder_kfold.pt')
+            print(f'Fold {fold+1} completed. Best loss: {best_loss:.2e}, Mean MM: {mean_mm:.2e}')
 
 
-#create a histogram of each fold model evalutating the test set
-plt.figure()
-plt.xscale('log')
 
-plt.hist((mm_loss_test.flatten()).detach().cpu().numpy(), bins=bins, histtype='step', color='k', label='Avg. Weights')
-print('Avg. Weights:',f'{np.median(mm_loss_test.flatten().detach().cpu().numpy()):.2e}', '\t', f'{np.max(mm_loss_test.flatten().detach().cpu().numpy()):.2e}')
-for fold in range(k):
-    model = Decoder(3, amp_basis, amp_mean, phase_basis, phase_mean, layers=layers, act_fn=torch.nn.ReLU, device=device)
-    model.load_state_dict(fold_models[fold])
-    model.float()
-    model.eval()
-    
+    fold_models = [torch.load(f'{MODELS_FOLDER}/rolling/decoder_kfold_{fold}.pt', map_location=device) for fold in range(k)]
+    # Average the weights of the 5 models
+    avg_model = Decoder(3, amp_basis, amp_mean, phase_basis, phase_mean, layers=layers, act_fn=torch.nn.GELU, device=device)
+    for name, param in avg_model.named_parameters():
+        param.data.copy_(torch.stack([model[name] for model in fold_models]).mean(dim=0))
+    avg_model.double()
+    avg_model.eval()
+
     with torch.no_grad():
         test_loss = 0
         mm_loss_test = 0
         for test_y, test_wf in test_dl:
-            outputs_wave_test = model(test_y.to(device))
+            outputs_wave_test = avg_model(test_y.to(device))
             outputs_wave_test = to_wave(outputs_wave_test)
             test_wf_wave = to_wave(test_wf).to(device)
             
@@ -459,23 +425,85 @@ for fold in range(k):
         mm_loss_test = mm_loss_test/len(test_dl)
         
         # Plot mismatch histogram
+        plt.figure()
         n_bins = 1+np.log2(len(mm_loss_test)).round().astype(int)
         bins = np.logspace(np.log10(mm_loss_test[mm_loss_test > 0].detach().cpu().numpy().min()), 
-                          np.log10(mm_loss_test[mm_loss_test > 0].detach().cpu().numpy().max()), 
-                          n_bins)
+                        np.log10(mm_loss_test[mm_loss_test > 0].detach().cpu().numpy().max()), 
+                        n_bins)
         
         if mm_loss_test.min() == 0:
             bins = np.insert(bins, 0, 0.)
         
-        plt.hist((mm_loss_test.flatten()*test_power).detach().cpu().numpy(), bins=bins,     
-                 histtype='step', label = f'Fold {fold+1}')
+        plt.hist((mm_loss_test.flatten()*test_power).detach().cpu().numpy(), bins=bins, 
+                histtype='step', color='k')
+        plt.xlabel(r'$\mathfrak{M}$')
+        plt.xscale('symlog' if mm_loss_test.min() == 0 else 'log')
+        plt.title(f'Test Set MM Distribution')
+        plt.savefig(f'{PLOTS_FOLDER}/sxs_mm_hist_test.png', dpi=300)
+        plt.close()
         
+        # Plot MM vs q
+        plt.figure()
+        plt.scatter((mm_loss_test).detach().cpu().numpy(), 1/test_y[:,0].cpu().numpy(), s=2, alpha=0.9)
+        plt.xscale('log')
+        plt.xlabel(r'$\mathfrak{M}$')
+        plt.ylabel(r'$q$')
+        plt.title(f'Test Set MM vs q')
+        plt.savefig(f'{PLOTS_FOLDER}/sxs_mm_vs_q_test.png', dpi=300)
+        plt.close()
 
-        print(f'Fold {fold+1}:',f'{np.median(mm_loss_test.flatten().detach().cpu().numpy()):.2e}', '\t', f'{np.max(mm_loss_test.flatten().detach().cpu().numpy()):.2e}')
-plt.xlabel(r'$\mathfrak{M}$')
-plt.xscale('symlog' if mm_loss_test.min() == 0 else 'log')
-plt.title(f'Test Set MM Distribution')
-plt.legend()
-plt.savefig(f'kfold_plots/sxs_mm_hist_test.png', dpi=300)
-plt.close()
-    # print(f'Fold {fold+1} test loss: {test_loss.item():.2e}')
+    print(f'\nFinal test loss: {test_loss.item():.2e}')
+    # Save the averaged model
+    torch.save(avg_model.state_dict(), f'{MODELS_FOLDER}/decoder_kfold.pt')
+
+
+    #create a histogram of each fold model evalutating the test set
+    plt.figure()
+    plt.xscale('log')
+
+    plt.hist((mm_loss_test.flatten()).detach().cpu().numpy(), bins=bins, histtype='step', color='k', label='Avg. Weights')
+    print('Avg. Weights:',f'{np.median(mm_loss_test.flatten().detach().cpu().numpy()):.2e}', '\t', f'{np.max(mm_loss_test.flatten().detach().cpu().numpy()):.2e}')
+    for fold in range(k):
+        model = Decoder(3, amp_basis, amp_mean, phase_basis, phase_mean, layers=layers, act_fn=torch.nn.GELU, device=device)
+        model.load_state_dict(fold_models[fold])
+        model.double()
+        model.eval()
+        
+        with torch.no_grad():
+            test_loss = 0
+            mm_loss_test = 0
+            for test_y, test_wf in test_dl:
+                outputs_wave_test = model(test_y.to(device))
+                outputs_wave_test = to_wave(outputs_wave_test)
+                test_wf_wave = to_wave(test_wf).to(device)
+                
+                mm_loss_test = mymismatch(outputs_wave_test, test_wf_wave)
+                test_power = 1
+                power_diff_test = nn.L1Loss()(abs(test_wf_wave).sum(dim=-1), abs(outputs_wave_test).sum(dim=-1))
+                
+                test_loss += torch.log10((mm_loss_test*test_power).mean()) + (power_diff_test.mean())
+            
+            test_loss = test_loss/len(test_dl)
+            mm_loss_test = mm_loss_test/len(test_dl)
+            
+            # Plot mismatch histogram
+            n_bins = 1+np.log2(len(mm_loss_test)).round().astype(int)
+            bins = np.logspace(np.log10(mm_loss_test[mm_loss_test > 0].detach().cpu().numpy().min()), 
+                            np.log10(mm_loss_test[mm_loss_test > 0].detach().cpu().numpy().max()), 
+                            n_bins)
+            
+            if mm_loss_test.min() == 0:
+                bins = np.insert(bins, 0, 0.)
+            
+            plt.hist((mm_loss_test.flatten()*test_power).detach().cpu().numpy(), bins=bins,     
+                    histtype='step', label = f'Fold {fold+1}')
+            
+
+            print(f'Fold {fold+1}:',f'{np.median(mm_loss_test.flatten().detach().cpu().numpy()):.2e}', '\t', f'{np.max(mm_loss_test.flatten().detach().cpu().numpy()):.2e}')
+    plt.xlabel(r'$\mathfrak{M}$')
+    plt.xscale('symlog' if mm_loss_test.min() == 0 else 'log')
+    plt.title(f'Test Set MM Distribution')
+    plt.legend()
+    plt.savefig(f'{PLOTS_FOLDER}/sxs_mm_hist_test.png', dpi=300)
+    plt.close()
+        # print(f'Fold {fold+1} test loss: {test_loss.item():.2e}')

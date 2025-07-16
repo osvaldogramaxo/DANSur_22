@@ -26,24 +26,11 @@ sns.set_style()
 # silence warnings
 import warnings
 warnings.filterwarnings("ignore")
-# from tsai.data.core import TSDatasets, TSDataLoader
-#%%
-# Define project folder structure
-if __name__ == '__main__':
-    PARENT_FOLDER = '/home/osvaldogramaxo/scratch/22_approx'
-    DATA_FOLDER = os.path.join(PARENT_FOLDER, 'data')
-    MODELS_FOLDER = os.path.join(PARENT_FOLDER, 'models')
-    PLOTS_FOLDER = os.path.join(PARENT_FOLDER, 'plots')
-
-    # Create folders if they don't exist
-    os.makedirs(DATA_FOLDER, exist_ok=True)
-    os.makedirs(MODELS_FOLDER, exist_ok=True)
-    os.makedirs(PLOTS_FOLDER, exist_ok=True)
-
 import functools
 print = functools.partial(print, flush=True) # all print()s will be called with "flush=True"
+# from tsai.data.core import TSDatasets, TSDataLoader
+#%%
 
-print("Imported all. Starting script")
 class MyDataset(Dataset):
     def __init__(self, X, y, device = 'cpu'):
         self.X = torch.Tensor(X).to(device)
@@ -398,9 +385,9 @@ def get_pca_bases(base_tensor, return_only_xvar = False, plus_cross = False, qs 
     # print('DEBUG: PCA INPUT SHAPE:', base_tensor[:5000,:length].cpu().numpy().shape)
     ncs.append(nc)
     # pca_1 = PCA(n_components = get_n_amp_from_n_phase(nc) )
-    pca_1 = PCA(n_components = 30 )
+    pca_1 = PCA(n_components = 19 )
     pca_1.fit(base_tensor[:10000,:length])
-    pca_2 = PCA(n_components = 70) 
+    pca_2 = PCA(n_components = 23) 
     pca_2.fit(base_tensor[:10000,length:])
     mms, orig, recon = plot_hist_reconstruct(pca_1, pca_2, base_tensor[10000:].clone(), qs = qs[10000:], plotting=plotting)
 
@@ -464,11 +451,11 @@ def get_pca_bases(base_tensor, return_only_xvar = False, plus_cross = False, qs 
 
 def find_best_lr(model, optimizer, train_dl, criterion = None, ax = None):
         lr_finder = LRFinder(model, optimizer, criterion, device="cuda")
-        lr_finder.range_test(train_dl, start_lr=1e-5, end_lr=7e-2, num_iter=100, diverge_th=5, step_mode='exp', smooth_f = 0.2)
+        lr_finder.range_test(train_dl, start_lr=1e-5, end_lr=2e-3, num_iter=100, diverge_th=5, step_mode='exp', smooth_f = 0.4)
         if ax is not None:
             lr_finder.plot(ax = ax)
         lr_finder.reset() # to reset the model and optimizer to their initial state
-        losses = lr_finder.history['loss']
+        losses = lr_finder.history['loss'][10:-10]
         min_grad_idx = (np.gradient(np.array(losses))).argmin()
         best_lr = lr_finder.history['lr'][min_grad_idx]
         return best_lr
@@ -480,7 +467,7 @@ def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, 
     bestloss = float('inf')
     worst_mm = float('inf')
     if scheduler is not None:
-        scheduler = scheduler(optimizer, patience=100, factor=0.5, verbose=True)
+        scheduler = scheduler(optimizer, patience=500, factor=0.5, verbose=True)
     # num_epochs = 1000
     sys.stdout.flush()
     # scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=2e-2, steps_per_epoch=len(train_dl), epochs=num_epochs)
@@ -497,7 +484,7 @@ def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, 
         best_ep = 0
         # iter_num = -1
         # k=10
-        early_stopping = EarlyStopping(patience=3000, verbose=False, delta=1e-1)
+        early_stopping = EarlyStopping(patience=1000, verbose=False, delta=1e-1)
         # if verbose:
         #     verb_range = trange(num_epochs)
         # else:
@@ -536,7 +523,7 @@ def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, 
                     asd_loss = ASDL1Loss( )(wf_wave, outputs_wave)
                     
                     loss = torch.log10( (mm_loss*wave_power).mean()  ) + \
-                           nn.L1Loss()(data_pcs, gen_pcs) + (power_diff.mean()) #+ torch.log10(asd_loss)
+                           nn.L1Loss()(data_pcs, gen_pcs)*10 + (power_diff.mean()) #+ torch.log10(asd_loss)
                     # Backward pass and optimization
                     optimizer.zero_grad(set_to_none=True)
                     loss.backward()#create_graph=True)
@@ -576,7 +563,7 @@ def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, 
                         
                         
                         val_loss += torch.log10((mm_loss_valid*v_wave_power).mean()) + \
-                                    nn.L1Loss()(val_pcs, decoded_valid) + (power_diff_valid.mean())
+                                    nn.L1Loss()(val_pcs, decoded_valid)*10 + (power_diff_valid.mean())
 
                             
                     val_loss = val_loss/len(val_dl)    
@@ -715,17 +702,37 @@ def get_folder_from_path(str):
     path = os.path.abspath(str)
     return '/'.join(path.split('/')[:-1])
 # %%
-plot_path = '.'
+# plot_path = '.'
 if __name__ == "__main__":
-    plot_path = './pretrain_files'
-    # sys.stdout.flush()        
+    print('Starting script')
     import argparse
     # Create the argument parser
     parser = argparse.ArgumentParser(description='Train decoders for an individual mode.')
-    # parser.add_argument('--mode', type=int, help='Which mode to use')
+    parser.add_argument('--approximant', type=str, help='Approximant to use')
     print('Parsing arguments')
     # Parse the arguments
     args = parser.parse_args()
+    approx = args.approximant
+    # Define project folder structure
+    PARENT_FOLDER = os.getcwd()
+    DATA_FOLDER = os.path.join(PARENT_FOLDER, 'data')
+    PARENT_FOLDER = os.getcwd()+'/pretrain_files_'+approx
+    print('Working in ', PARENT_FOLDER)
+    
+    MODELS_FOLDER = os.path.join(PARENT_FOLDER, 'models')
+    PLOTS_FOLDER = os.path.join(PARENT_FOLDER, 'plots')
+
+    # Create folders if they don't exist
+    os.makedirs(DATA_FOLDER, exist_ok=True)
+    os.makedirs(MODELS_FOLDER, exist_ok=True)
+    os.makedirs(os.path.join(MODELS_FOLDER, 'rolling'), exist_ok=True)
+    os.makedirs(PLOTS_FOLDER, exist_ok=True)
+    os.makedirs(os.path.join(PLOTS_FOLDER, 'data'), exist_ok=True)
+    os.makedirs(os.path.join(PLOTS_FOLDER, 'rolling'), exist_ok=True)
+    os.makedirs(os.path.join(PLOTS_FOLDER, 'pretrain_files'), exist_ok=True)
+    plot_path = PLOTS_FOLDER
+    # sys.stdout.flush()        
+
 
     # Setup device depending on CUDA availability
     try:
@@ -753,7 +760,7 @@ if __name__ == "__main__":
     #     'data/NRSur7dq4_dataset_q6_4modes_deucalion_1M.hdf', length = length, mode = args.mode,
     #     )
     base_tensor, base_params_q, base_valid, base_valid_params_q = setup_data_from_file(
-        f'{DATA_FOLDER}/NRHybSur3dq8_dataset.hdf', length = length,
+        f'{DATA_FOLDER}/{approx}_dataset.hdf', length = length,
         )
     
     # get_pca_bases(base_tensor)
@@ -774,7 +781,7 @@ if __name__ == "__main__":
     # model = Decoder(latent_dim, *get_pca_bases(base_tensor, qs = qs, plotting=True, mode = args.mode), 
     #                 layers = [2**8, 2**10, 2**9], act_fn = torch.nn.GELU)
     model = Decoder(latent_dim, *get_pca_bases(base_tensor, qs = qs, plotting=True), 
-                    layers = [2**6, 2**9, 2**10], act_fn = torch.nn.ReLU, device = device)
+                    layers = [2**6, 2**9, 2**10], act_fn = torch.nn.GELU, device = device)
     
     train_ds = MyDataset(base_params_q.to(model.device).float(), base_tensor.to(model.device).float())
     train_dl = MultiEpochsDataLoader(train_ds, 512, shuffle=False, pin_memory=False)
@@ -787,7 +794,7 @@ if __name__ == "__main__":
     # optimizer = topt.DiffGrad(model.parameters(), lr=3e-3, weight_decay=0e-4)
     #optimizer = SophiaG(model.parameters(), lr=3e-3,rho=0.5,betas=(0.96, 0.99), weight_decay=0e-2)
     # optclass = topt.SophiaH
-    # optclass = AdEMAMix
+    # optclass = topt.SimplifiedAdEMAMix
     optclass = topt.StableAdamW
     optimizer = optclass(model.parameters(), lr=1)
     model.cuda()
@@ -800,8 +807,11 @@ if __name__ == "__main__":
         best_lr = 1
     else:
         try:
-            best_lr = find_best_lr(model, optimizer, train_dl, criterion = MyLoss(model) )
+            fig, ax = plt.subplots()
+            best_lr = find_best_lr(model, optimizer, train_dl, criterion = MyLoss(model), ax = ax)
             print(f'Best LR found is {best_lr:.2e}')
+            plt.savefig(os.path.join(PLOTS_FOLDER, f'lr_finder.png'), dpi=300)
+            plt.close()
         except Exception as e:
             print(e)
             best_lr = 1e-4
