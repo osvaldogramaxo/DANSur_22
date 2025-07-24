@@ -146,30 +146,27 @@ class Decoder(nn.Module):
         self.decoder = self._build_decoder(layers).to(self.device)
         
         self.to(self.device)
-        # print('Latent dim', self.latent_dim,', Base dim', self.base_dim)
+        
     def _build_decoder(self, layers):
         layers_list = []
-        # layers_list.append(block(self.latent_dim, self.base_dim))
         for i, current_layer in enumerate(layers):
             if i == 0:
                 layers_list.append(self.block(self.latent_dim, current_layer).to(self.device) )
             else:
                 layers_list.extend([self.act_fn(), self.block(layers[i-1], current_layer).to(self.device) ])
-        # layers_list.extend([self.act_fn(), self.block(self.latent_dim)])
         layers_list.extend([self.act_fn(), self.block(layers[-1], self.base_dim).to(self.device)])
         return nn.Sequential(*layers_list)
-    # def PCA(self, x):
-    #     return self.PCA(x)
+
     def PCA(self, x):
-        a_ = (x[:,:len(self.amp_basis.T)].to(self.device)- self.amp_mean.to(self.device)).T
-        p_ = (x[:,len(self.amp_basis.T):].to(self.device)- self.phase_mean.to(self.device)).T
+        a_ = (x[...,:len(self.amp_basis.T)].to(self.device)- self.amp_mean.to(self.device)).T
+        p_ = (x[...,len(self.amp_basis.T):].to(self.device)- self.phase_mean.to(self.device)).T
         proj_a = torch.matmul(self.amp_basis.to(self.device), a_) 
         proj_p = torch.matmul(self.phase_basis.to(self.device), p_) 
         out =  torch.cat([proj_a, proj_p], dim=0).to(self.device).T
         return out
     def invPCA(self, x):
-        a_ = x[:,:len(self.amp_basis)].to(self.device)
-        p_ = x[:,len(self.amp_basis):].to(self.device)
+        a_ = x[...,:len(self.amp_basis)].to(self.device)
+        p_ = x[...,len(self.amp_basis):].to(self.device)
         invproj_a = torch.matmul(a_, self.amp_basis.to(self.device)) + self.amp_mean.to(self.device)
         invproj_p = torch.matmul(p_, self.phase_basis.to(self.device)) + self.phase_mean.to(self.device)
         out = torch.cat([invproj_a, invproj_p], dim=1).to(self.device)
@@ -178,6 +175,9 @@ class Decoder(nn.Module):
         x = self.decoder(x)
         x = self.invPCA(x)
         return x
+    
+    
+    
 def unwrap_phase(complex_array):
     phase = np.angle(complex_array)
     unwrapped_phase = np.unwrap(phase)
@@ -195,7 +195,7 @@ def get_cplx_wave(param, length=2048, roll=0,whiten = False, sur = None):
     if 'Sur' in sur:
         sur = gwsurrogate.LoadSurrogate(sur) 
         dt=2 # in M
-        f_low=0.005 if 'Hyb' in sur.name else 0.
+        f_low=0.004 if 'Hyb' in sur.name else 0.
         _, h, _ = sur(qs, [0,0,param['chi_1']], [0,0,param['chi_2']],  times = np.arange(-4096, 125, dt), f_low=f_low, mode_list=[(2,2)] )   # dyn stands for dynamics, do dyn.keys() to see contents
         wave_cplx = h[(2,2)]
     elif ('Phenom' in sur) or ('_PA' in sur):
@@ -203,7 +203,7 @@ def get_cplx_wave(param, length=2048, roll=0,whiten = False, sur = None):
         return h[(2,2)]
     
     elif 'SEOBNRv5HM' in sur:
-        times, hlm = pyseobnr.generate_waveform.generate_modes_opt(qs, param['chi_1'], param['chi_2'], 1/(67-qs**1.25), settings={'return_modes': [(2, 2)]})
+        times, hlm = pyseobnr.generate_waveform.generate_modes_opt(qs, param['chi_1'], param['chi_2'], 1/(70-qs**1.25), settings={'return_modes': [(2, 2)]})
         wave_cplx = hlm['2,2']
         ap_22_argmax = np.argmax(abs(wave_cplx))
         ap_wf_times = times - times[ap_22_argmax]
@@ -455,8 +455,8 @@ def get_dimensionless_approx(q, s1, s2, approximant='IMRPhenomTPHM'):
                 'spin2y' : 0*u.dimensionless_unscaled,
                 'spin2z' : s2*u.dimensionless_unscaled,
                 'deltaT' : u.s/(4096),
-                'f22_start' : 20.*u.Hz,
-                'f22_ref' : 20.*u.Hz,
+                'f22_start' : 10.*u.Hz,
+                'f22_ref' : 10.*u.Hz,
                 'distance' : 1.*u.Mpc/mpc_in_m,
                 'inclination' : np.pi/2.*0*u.rad,
                 'phi_ref' : 0*u.rad,

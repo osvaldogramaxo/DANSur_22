@@ -51,7 +51,7 @@ class DANSur(SurrogateEvaluator):
         See NRHybSur3dq8 for an example.
         """
         
-        DANSurModel = torch.jit.load(os.path.dirname(__file__)+'/DANSur.pt', map_location='cpu')
+        DANSurModel = torch.jit.load(os.path.dirname(__file__)+'/DANSur_v2.pt', map_location='cpu')
         return DANSurModel
     def _get_intrinsic_parameters(self, q, chiA0, chiB0, precessing_opts,
             tidal_opts, par_dict):
@@ -65,7 +65,7 @@ class DANSur(SurrogateEvaluator):
                 size 3.
         """
         # check inputs are torch tensors. If not, convert them
-        q_in = q if q<=1. else 1./q
+        q_in = q if (q<=1.).all() else 1./q
         if not isinstance(q, torch.Tensor):
             q = torch.tensor(q)
             q_in = torch.tensor(q_in)
@@ -78,13 +78,15 @@ class DANSur(SurrogateEvaluator):
         # if len(q.shape) == 1:
         #     q = q.unsqueeze(-1)
         if (chiA0).shape[-1] != 1:
-            chiA0 = (chiA0)[...,2].unsqueeze(0)
+            chiA0 = chiA0[...,2]
         if (chiB0).shape[-1] != 1:
-            chiB0 = (chiB0)[...,2].unsqueeze(0)
+            chiB0 = chiB0[...,2]
         # print(q, chiA0, chiB0)
         # print(chiA0.shape,chiB0.shape)
 
         torch_inputs = torch.stack((q_in, chiA0, chiB0)).float().T
+        if len(torch_inputs.shape) == 3:
+            torch_inputs = torch_inputs.squeeze(0)
         return torch_inputs
     def _check_params(self, q, chiA0, chiB0, precessing_opts, tidal_opts,
             par_dict):
@@ -428,7 +430,7 @@ class DANSur(SurrogateEvaluator):
             chiB0 = torch.tensor(chiB0)
             if len(chiB0.shape) == 0:
                 chiB0 = chiB0.unsqueeze(0)
-        if q<=1: q = 1./q
+        if (q<=1).all(): q = 1./q
 
         # Sanity checks
         if not skip_param_checks:
@@ -514,7 +516,7 @@ class DANSur(SurrogateEvaluator):
         fM_low = f_low*t_scale
         fM_ref = f_ref*t_scale
         # print(x)
-        # print(x.shape)
+        print(x.shape)
         h = self._sur_dimless(x)
         h = self.to_wave(h).numpy()
         h = {tuple(mode): h[i] for i, mode in enumerate(self.modes_list)}
@@ -553,16 +555,17 @@ class DANSur(SurrogateEvaluator):
         # Rescale domain to physical units
         # print(h)
         domain = np.arange(-4096+100, 100, 2).astype(float)#*np.ones_like(h.real)
+
         # domain
         # print(domain.shape, t_scale.shape)
         # print('Pre-scale', domain[0], domain[-1], self._domain_type)
         # print(domain)
         # print(M, t_scale)
         if self._domain_type == 'Time':
-            domain *= t_scale
+            domain = domain * t_scale
         elif self._domain_type == 'Frequency':
-            print('WHAT')
-            domain /= t_scale
+            raise Exception('Don\'t know what to with frequency domain')
+            # domain /= t_scale
         else:
             raise Exception('Invalid _domain_type.')
         # print('Post-scale', domain[0], domain[-1])
@@ -574,7 +577,7 @@ class DANSur(SurrogateEvaluator):
         #     if self._domain_type == 'Time':
         if units=='mks':
             dt_t = times[1] - times[0]
-        else: dt_t = domain[1]
+        else: dt_t = domain[...,1]
         # print(domain[0], domain[-1]+dt_t, 1/dt_t)
         interp_domain = np.arange(domain[0], domain[-1]+dt_t, dt_t).astype(float)
         

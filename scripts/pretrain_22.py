@@ -232,7 +232,7 @@ class MyLoss(nn.Module):
 
         
         asd_loss = ASDL1Loss()(wf_wave, outputs_wave)
-        # print('DEBUG: LOSS COMPONENTS', torch.log10( (mm_loss*wave_power).mean()  ),'&', rec_loss,'&', power_diff.mean())
+
         loss = torch.log10( (mm_loss*wave_power).mean()  ) + \
                 (rec_loss) + (power_diff.mean()) #+ torch.log10(asd_loss)
         return loss
@@ -250,7 +250,6 @@ def setup_data_from_file(filepath, length = 2048, mode=None, plus_cross = False,
         wavs = np.expand_dims(wavs, 1)
     # print('########################################################\n',wavs.shape,'\n##################################################################')
     
-    print("######################################################## Detecting heretics ########################################################")
     if plus_cross:
         base_HERETICAL = torch.stack( ( tensor(wavs).real, tensor(wavs).imag ), dim=1).flatten(1)
     else:
@@ -262,11 +261,7 @@ def setup_data_from_file(filepath, length = 2048, mode=None, plus_cross = False,
     pca_p.fit(base_HERETICAL[:10_000,length:])
     # calculate mismatch on reconstructions
     mms, orig, recon = plot_hist_reconstruct(pca_a, pca_p, base_HERETICAL.clone(), plotting = plotting, mode=mode)
-    max_mm = (mms[(qs>1.5)*(qs<8)]).max()
-    mask = (mms<=max_mm)
-    print(f'Accepted {sum(mask)}/{len(mask)} waveforms')
-    wavs, params = wavs[mask], params[mask]
-    print("######################################################## Destroyed heretics ########################################################")
+    
     
     
     train_size = int(0.8 * len(wavs))
@@ -484,7 +479,7 @@ def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, 
         best_ep = 0
         # iter_num = -1
         # k=10
-        early_stopping = EarlyStopping(patience=1000, verbose=False, delta=1e-1)
+        early_stopping = EarlyStopping(patience=1000, verbose=False)
         # if verbose:
         #     verb_range = trange(num_epochs)
         # else:
