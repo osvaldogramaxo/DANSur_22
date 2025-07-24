@@ -6,24 +6,18 @@ This project implements neural network-based surrogate modeling for gravitationa
 
 ```
 .
-├── comparison_plots/      # Directory for model comparison visualizations
 ├── data/                  # Dataset storage (excluded from git)
-├── kfold_models/          # Directory for k-fold cross-validation model checkpoints
-├── kfold_plots/           # Directory for k-fold cross-validation visualizations
-├── logs/                  # Training and evaluation logs
-├── models/                # Saved model checkpoints
-├── plots/                 # Generated visualizations
-├── pretrain_files/        # Pretraining related files
+├── pretrain_files_[approximant]/        # Pretraining related files
+├── sxs_kfold_[approximant]/        # SXS k-fold cross-validation related files
 ├── scripts/               # Python scripts
 │   ├── __init__.py
 │   ├── pretrain_22.py
-│   ├── sxs_finetune.py
 │   ├── sxs_finetune_kfold.py
 │   ├── sxs_utils.py
 │   ├── train_decoder_ensemble.py
 │   ├── utils.py
-│   └── waveform_generation.py
-└── submission/            # SLURM job submission scripts
+│   ├── waveform_generation.py
+│   └── DANSur.pt # Torchscript version of model fine-tuned on SXS data (NRHybSur pre-training)
 ```
 
 ## Setup
@@ -45,23 +39,12 @@ pip install -r requirements.txt
 ### Waveform Generation
 To generate waveforms:
 ```bash
-python -m scripts.waveform_generation  --sur (NRSur7dq4 or NRHybSur3dq8)
+python -m scripts.waveform_generation  --sur (NRSur7dq4 | NRHybSur3dq8 | SEOBNRv5HM | SEOBNRv4HM_PA | IMRPhenomTHM)
 ```
 
 ### Training
-- Pretraining: `python -m scripts.pretrain_22`
-- Fine-tuning: `python -m scripts.sxs_finetune_kfold`
-
-### Model Comparison
-- View model comparisons in the `comparison_plots` directory
-- K-fold cross-validation results in `kfold_plots`
-
-### SLURM Job Submission
-For cluster submission, use the scripts in the `submission` directory:
-```bash
-sbatch submission/finetune_sxs_kfold.sh
-```
-
+- Pretraining: `python -m scripts.pretrain_22 --approximant (NRSur7dq4 | NRHybSur3dq8 | SEOBNRv5HM | SEOBNRv4HM_PA | IMRPhenomTHM)`
+- Fine-tuning: `python -m scripts.sxs_finetune_kfold --approximant (NRSur7dq4 | NRHybSur3dq8 | SEOBNRv5HM | SEOBNRv4HM_PA | IMRPhenomTHM)`
 
 
 ## Project Details
