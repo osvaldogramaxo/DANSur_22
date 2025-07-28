@@ -177,7 +177,29 @@ class Decoder(nn.Module):
         return x
     
     
-    
+def torch_unwrap(p, discont=None, axis=-1, period=torch.pi):
+    p = torch.as_tensor(p)
+    nd = p.ndim
+    dd = torch.diff(p, dim=axis)
+    if discont is None:
+        discont = period/2
+    slice1 = [slice(None, None)]*nd
+    slice1[axis] = slice(1, None)
+    slice1 = tuple(slice1)
+    # dtype = torch.promote_types(dd.dtype, period.dtype)
+
+    interval_high = period / 2
+    boundary_ambiguous = True
+    interval_low = -interval_high
+    ddmod = (dd - interval_low) % period + interval_low
+    if boundary_ambiguous:
+        mask = (ddmod == interval_low) & (dd > 0)
+        ddmod[mask] = interval_high
+    ph_correct = ddmod - dd
+    ph_correct[torch.abs(dd) < discont] = 0
+    up = p.clone()
+    up[slice1] = p[slice1] + ph_correct.cumsum(dim=axis)
+    return up
 def unwrap_phase(complex_array):
     phase = np.angle(complex_array)
     unwrapped_phase = np.unwrap(phase)
@@ -190,6 +212,20 @@ def get_phase(elem):
     out = out-out[0]
     out = out*np.sign(out.mean())
     return out
+def get_phases(array, set_init_zero = True):
+    out = unwrap_phase(array)
+    if set_init_zero:
+        out = out-out[..., np.newaxis,0]
+    out = out*np.sign(out.mean(axis=-1)[...,np.newaxis])
+    print(type(out))
+    if isinstance(out, np.ndarray):
+        return tensor(out).float() 
+    else:
+        return out.float() 
+def wave_to_amp_phase(wave):
+    amp = torch.abs(wave)
+    phase = get_phases(wave)
+    return torch.cat([amp, phase], dim=-1)
 def get_cplx_wave(param, length=2048, roll=0,whiten = False, sur = None):
     qs = 1/param['mass_ratio'] if param['mass_ratio'].max()<1 else param['mass_ratio']
     if 'Sur' in sur:
@@ -222,17 +258,57 @@ def get_cplx_wave(param, length=2048, roll=0,whiten = False, sur = None):
         return np.roll(wave_cplx, -int(length*postmerg_frac), axis=-1)[-length:]
     else:
         return wave_cplx
+
+def get_hm_wave(param, modes = [(2,2), (3,3),(2,1), (4,4)], length=2048, roll=0,whiten = False, sur = None):
+    qs = 1/param['mass_ratio'] if np.max(param['mass_ratio'])<1 else param['mass_ratio']
+    if 'Sur' in sur:
+        sur = gwsurrogate.LoadSurrogate(sur) 
+        dt=2 # in M
+        f_low=0.004 if 'Hyb' in sur.name else 0.
+        _, h, _ = sur(qs, [0,0,param['chi_1']], [0,0,param['chi_2']],  times = np.arange(-4096, 125, dt), f_low=f_low, mode_list=modes )   # dyn stands for dynamics, do dyn.keys() to see contents
+        # wave_cplx = h[(2,2)] 
+        hproc = np.array([h[mode] for mode in modes], dtype=np.complex128)
+        amax = np.argmax(abs(hproc)[0])
+        hproc = hproc[:, amax-2048+50:amax+50]
+        return hproc
+
+    elif ('Phenom' in sur) or ('_PA' in sur):
+        h = get_dimensionless_approx(param['mass_ratio'], param['chi_1'], param['chi_2'], sur)
+        hproc = np.array([h[mode].value for mode in modes], dtype=np.complex128)
+        # hproc = np.stack(hproc)
+        return hproc
+    
+    elif 'SEOBNRv5HM' in sur:
+        times, hlm = pyseobnr.generate_waveform.generate_modes_opt(qs, param['chi_1'], param['chi_2'], 1/(70-qs**1.25), settings={'return_modes': modes})
+        wave_cplx = np.array([hlm[str(mode).replace(' ', '').replace('(', '').replace(')', '')] for mode in modes], dtype=np.complex128)
+        ap_22_argmax = np.argmax(abs(wave_cplx[0]))
+        ap_wf_times = times - times[ap_22_argmax]
+        ap_interp = [np.interp( np.arange(-4096+100, 100, 2),ap_wf_times, wave_cplx[i]) for i in range(wave_cplx.shape[0])]
         
-def gen_data(inj_params, N = 1024, parallel=False, use_tqdm = True, whiten = False,sur = None):
+        ap_interp = [abs(ap_interp[i])*np.exp(1j*get_phase(ap_interp[i])) for i in range(wave_cplx.shape[0])]
+        return np.stack(ap_interp)
+    else:
+        raise ValueError('Surrogate model not supported')
+
+    
+    amax = np.argmax(abs(wave_cplx))
+    wave_cplx = wave_cplx[amax-2048+50:amax+50]
+    if roll!=0:
+        postmerg_frac = 1/5
+        return np.roll(wave_cplx, -int(length*postmerg_frac), axis=-1)[-length:]
+    else:
+        return wave_cplx
+        
+def gen_hm_data(inj_params, N = 1024, parallel=False, use_tqdm = True, whiten = False,sur = None, modes = [(2,2), (3,3),(2,1), (4,4)] ):
     bilby.utils.logging.disable()
     if use_tqdm: auxfunc=tqdm
     else: auxfunc = lambda x: x
     # print('SURROGATE MODEL', sur)
     # sur = gwsurrogate.LoadSurrogate(sur)
     if parallel:
-        out = Parallel(n_jobs=-1)(delayed(get_cplx_wave)(param, whiten=False, sur = sur) for param in auxfunc(inj_params))
+        out = Parallel(n_jobs=-1)(delayed(get_hm_wave)(param, whiten=False, sur = sur, modes = modes) for param in auxfunc(inj_params))
     else:
-        out=[get_cplx_wave(param, whiten=False, sur=sur) for param in tqdm(inj_params)]
+        out=[get_hm_wave(param, whiten=False, sur=sur, modes = modes) for param in tqdm(inj_params)]
     return np.stack(out)
 
 def plot_hist_from_binned_statistic(bin_edges, bin_means, color=None):
@@ -292,41 +368,71 @@ def myoverlap(h1, h2, dt=2, df=None):
         raise ValueError('Input must be numpy or torch tensor')
     
 def mymismatch(h1, h2, dt=2, df=None):
-    return (1-myoverlap(h1.double(), h2.double(), dt, df))
-def generate_dataset(priors, sur):
+    return torch.nan_to_num(1-myoverlap(h1.double(), h2.double(), dt, df), nan=0)
+
+def latent_mismatch(amp_phase_1, amp_phase_2, dt=2, df=None):
+    return torch.nan_to_num(1-myoverlap(to_wave(amp_phase_1), to_wave(amp_phase_2), dt, df), nan=0)
+
+def to_wave(x, plus_cross = False):
+    # return x[:,:x.shape[-1]//2]*torch.exp(1j*x[:,x.shape[-1]//2:]) 
+    amp = x[:,:x.shape[-1]//2]
+    phase = x[:,x.shape[-1]//2:]
+    phase = (phase - phase[:,0:1])*torch.sign(phase[:,-1:].real)
+    if plus_cross:
+        return amp+1j*phase
+    else:
+        if isinstance(x, np.ndarray):
+            x = amp*np.exp(1j*phase)
+            return x
+        else:
+            x = amp*torch.exp(1j*phase)
+            return x
+
+def generate_dataset(priors,  sur, modes = [(2,2), (3,3),(2,1), (4,4)] ):
     """
     Generates and saves data to an HDF5 file.
     """
+    qs_grid = np.linspace(1.0001, 8, 50)
+    chi1_grid = np.linspace(-0.8,0.8,50)
+    chi2_grid = np.linspace(-0.8,0.8,50)
+    params = np.stack(np.meshgrid(qs_grid, chi1_grid, chi2_grid), axis=-1).reshape(-1,3)
+    chunksize = len(params[:,0])
+    N = len(params[:,0])
     
-    chunksize = 1024
-    N = chunksize*100
-    with h5py.File(f'./data/{sur}_dataset.hdf', 'w', libver='latest', swmr=True) as file:
+    
+    
+    with h5py.File(f'./data/{sur}_hm_dataset.hdf', 'w', libver='latest', swmr=True) as file:
         # Create a dataset for storing classifier data
-        dset = file.create_dataset(name='Waveforms', shape=(N,2048), dtype=np.complex128)
+        
+
+        dset = file.create_dataset(name='Waveforms', shape=(N,len(modes),2048), dtype=np.complex128)
         
         
         # Create a dataset for storing SNRs
-        dset_snrs = file.create_dataset(name='Parameters', shape=(N,len(priors.keys())), dtype=np.float32)
-        file['Parameters'].attrs['names'] = list(priors.keys())
+        dset_snrs = file.create_dataset(name='Parameters', shape=(N,params.shape[-1]), dtype=np.float32)
+        file['Parameters'].attrs['names'] = list(['mass_ratio', 'chi_1', 'chi_2'])
         # Generate data
+        
         for i in tqdm(range( N//chunksize)):
             # Generate Parameters
-            params = priors.sample(chunksize)
-            params_array = np.stack([v for _,v in params.items()], axis=1)
+            # params = priors.sample(chunksize)
+            # params_array = np.stack([v for _,v in params.items()], axis=1)
             # param_names = [k for k,_ in params.items()]
-            params_list = convert_dict_to_list_of_dicts(params)
+            params_temp = params[i*chunksize:(i+1)*chunksize]
+            params_dict = {'mass_ratio': params_temp[:,0], 'chi_1': params_temp[:,1], 'chi_2': params_temp[:,2]}
+            params_list = convert_dict_to_list_of_dicts(params_dict)
             # Get data using the gen_data function
-            basedata = gen_data(parallel=True, inj_params=params_list, N=chunksize, use_tqdm=True, whiten=False, sur = sur)
+            basedata = gen_hm_data(parallel=True, inj_params=params_list, N=chunksize, use_tqdm=True, whiten=False, sur = sur, modes = modes)
             # Restore the original standard output
             # sys.stdout = og_stdout
             
             # Convert the basedata to a NumPy array and save it to the dataset
 
 
-            file['Waveforms'][i * chunksize:(i + 1) * chunksize] = basedata.astype(np.complex128)
+            file['Waveforms'][i * chunksize:(i + 1) * chunksize,...] = basedata.astype(np.complex128)
             
             # Save the SNRs to the dataset
-            file['Parameters'][i * chunksize:(i + 1) * chunksize] = params_array
+            file['Parameters'][i * chunksize:(i + 1) * chunksize] = params_temp
             
 class EarlyStopping:
     """Early stops the training if validation loss doesn't improve after a given patience. 
@@ -383,7 +489,10 @@ class EarlyStopping:
             self.trace_func(f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Saving model ...')
         torch.save(model.state_dict(), self.path)
         self.val_loss_min = val_loss
-
+def weighted_mse_loss(input, target, weight):
+    return torch.mean(weight * (input - target) ** 2)
+def weighted_L1_loss(input, target, weight):
+    return torch.mean(weight * (input - target).abs())
 class ASDL1Loss(nn.Module):
     def __init__(self, reduction='mean', scale='linear', normalize=False):
         """
@@ -435,6 +544,17 @@ import numpy as np
 from lalsimulation.gwsignal.core import waveform as wfm
 from lalsimulation.gwsignal.models import gwsignal_get_waveform_generator
 
+
+def get_wave_power(x, normalize=True):
+    if isinstance(x, np.ndarray):
+        power = np.sum(np.abs(to_wave(x )), axis=-1 )
+
+    else:
+        power = torch.sum(torch.abs(to_wave(x )), dim=-1 )
+    if normalize:
+        power = power/power.max()
+    # power = power/power.max()
+    return power
 
 def get_dimensionless_approx(q, s1, s2, approximant='IMRPhenomTPHM'):
     m1 = q/(1.+q)
@@ -507,3 +627,75 @@ def get_dimensionless_approx(q, s1, s2, approximant='IMRPhenomTPHM'):
         phase = np.angle(interp)-np.angle(interp[0])
         hlm[mode] = gwpy_ts(abs(interp)*np.exp(-1j*phase), times = np.arange(-4096+100, 100, 2) )/(M_sun_m.value*mtot)
     return hlm
+
+class HMLoss(nn.Module):
+    def __init__(self, modes, device = 'cpu'):
+        super(HMLoss, self).__init__()
+        self.modes = modes
+        self.device = device
+        self.cover_forward = Cover_Sphere(modes, n=5, infer_neg_m = True, device=device)
+        self.cover_forward_sxs = Cover_Sphere(modes, n=5, infer_neg_m = True, device=device)
+    def forward(self, pred, wf):
+        wf_wave = self.cover_forward_sxs(wf).to(self.device).flatten(0,2)
+        outputs_wave = self.cover_forward(pred).flatten(0,2)
+        mm_loss = mymismatch( outputs_wave,  wf_wave )
+        mm_loss = torch.nan_to_num(mm_loss)
+        wave_power = 1
+        power_diff = nn.L1Loss()(abs(wf_wave).sum(dim=-1), abs(outputs_wave).sum(dim=-1) )
+        loss = torch.log10( (mm_loss*wave_power).mean()  ) +  (power_diff.mean()) #+ torch.log10(asd_loss)
+        return loss
+
+class Cover_Sphere(nn.Module):
+    """
+    Sum the input tensor with spherical
+    harmonics. Initialize with a mode_map
+    dictionary and the number of points on
+    the sphere in each direction (theta and phi). 
+    The input tensor should have
+    shape (batch, n_modes, data). The output
+    tensor will have shape (batch, n, n, data)
+    """
+    def __init__(self, mode_map, n=10, infer_neg_m = False, device = 'cpu'):
+        super(Cover_Sphere, self).__init__()
+        self.n = n
+        self.mode_map = mode_map
+        self.infer_neg_m = infer_neg_m
+        if infer_neg_m:
+            self.neg_m_l_coeffs = torch.tensor([(-1)**l for _, (l,_) in self.mode_map.items()]).to(device)[None,:,None]
+            mode_map_neg_m = {k+len(mode_map): (l, -m) for k, (l, m) in self.mode_map.items()}
+            self.mode_map = {**self.mode_map, **mode_map_neg_m}
+            # self.ells = np.array([l for l, _ in self.mode_map.values()])
+            # self.ms = np.array([m for _, m in self.mode_map.values()])
+            
+
+        self.theta = np.linspace(0, np.pi, n+2)[1:-1]
+        self.phi = np.linspace(0, 2 * np.pi, n+1)[:-1]
+        self.THETA, self.PHI = np.meshgrid(self.theta, self.phi)
+        self.l_values = np.array([self.mode_map[i][0] for i in range(len(self.mode_map))])
+        self.m_values = np.array([self.mode_map[i][1] for i in range(len(self.mode_map))])
+        self.sylm_values = torch.from_numpy( np.array([spin_spherical_harmonic(-2, self.l_values[i], 
+                                          self.m_values[i], self.THETA, self.PHI) 
+                                          for i in range(len(self.mode_map))])
+                                            ).to(device)
+    def forward(self, h):
+        if self.infer_neg_m:
+            neg_m_h = self.neg_m_l_coeffs*torch.conj(h)
+            h = torch.cat([h, neg_m_h], dim=1)
+            
+        h_sphere = torch.einsum('ijk,lim->ljkm', self.sylm_values.to(h.device), h)
+        return h_sphere
+
+class DANSurEnsemble(nn.Module):
+    def __init__(self, decoders, modes_list, device = 'cpu'):
+        super(DANSurEnsemble, self).__init__()
+        # self.decoders = [torch.compile(x, mode = 'max-autotune', fullgraph=True, dynamic=True ) for x in decoders]
+        self.decoders = nn.ModuleList(decoders)
+        self.modes_list = modes_list
+        self.device = device
+    def to_wave(self, x):
+        return x[...,:x.shape[-1]//2]*torch.exp(1j*x[...,x.shape[-1]//2:])
+    # @torch.inference_mode()
+    def forward(self, x):
+        x = torch.stack([decoder(x) for decoder in self.decoders], dim=1)
+        x = self.to_wave(x)
+        return x
