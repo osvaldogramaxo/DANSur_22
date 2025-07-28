@@ -540,6 +540,11 @@ class ASDL1Loss(nn.Module):
 from astropy.constants import G,c
 import astropy.units as u
 from gwpy.timeseries import TimeSeries as gwpy_ts
+import os
+import sys
+from functools import partial
+from scipy.special import eval_legendre
+from sympy import Poly, legendre, Symbol, chebyshevt, lambdify
 import numpy as np
 from lalsimulation.gwsignal.core import waveform as wfm
 from lalsimulation.gwsignal.models import gwsignal_get_waveform_generator
@@ -628,6 +633,72 @@ def get_dimensionless_approx(q, s1, s2, approximant='IMRPhenomTPHM'):
         hlm[mode] = gwpy_ts(abs(interp)*np.exp(-1j*phase), times = np.arange(-4096+100, 100, 2) )/(M_sun_m.value*mtot)
     return hlm
 
+# ========== Dataset and DataLoader Classes ==========
+
+class MyDataset(Dataset):
+    """A generic PyTorch Dataset class that handles data loading.
+    
+    Args:
+        X: Input features
+        y: Target values
+        device: Device to load the data to ('cpu' or 'cuda')
+    """
+    def __init__(self, X, y, device='cpu'):
+        self.X = torch.Tensor(X).to(device)
+        self.y = torch.Tensor(y).to(device)
+
+    def __len__(self):
+        return len(self.X)
+
+    def __getitem__(self, index):
+        return self.X[index], self.y[index]
+
+class MultiEpochsDataLoader(DataLoader):
+    """A DataLoader wrapper that supports multiple epochs without rebuilding the worker pool.
+    
+    This can significantly speed up training by reusing workers across epochs.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._DataLoader__initialized = False
+        self.batch_sampler = _RepeatSampler(self.batch_sampler)
+        self._DataLoader__initialized = True
+        self.iterator = super().__iter__()
+
+    def __len__(self):
+        return len(self.batch_sampler.sampler)
+
+    def __iter__(self):
+        for _ in range(len(self)):
+            yield next(self.iterator)
+
+class _RepeatSampler:
+    """Sampler that repeats forever.
+    
+    Used by MultiEpochsDataLoader to avoid recreating workers.
+    
+    Args:
+        sampler: The sampler to repeat
+    """
+    def __init__(self, sampler):
+        self.sampler = sampler
+
+    def __iter__(self):
+        while True:
+            yield from iter(self.sampler)
+
+# ========== Activation Functions ==========
+
+class SinActivation(nn.Module):
+    """Sinusoidal activation function.
+    
+    Outputs values in the range [0, 1] using a sine function.
+    """
+    def forward(self, x):
+        return torch.sin(x)/2 + 0.5
+
+# ========== Loss Functions ==========
+
 class HMLoss(nn.Module):
     def __init__(self, modes, device = 'cpu'):
         super(HMLoss, self).__init__()
@@ -684,6 +755,424 @@ class Cover_Sphere(nn.Module):
             
         h_sphere = torch.einsum('ijk,lim->ljkm', self.sylm_values.to(h.device), h)
         return h_sphere
+
+# ========== SXS Dataset and Related Classes ==========
+
+class SXSDataset(Dataset):
+    """A PyTorch Dataset for handling SXS (Simulating eXtreme Spacetimes) waveform data.
+    
+    Args:
+        file_path: Path to the HDF5 file containing the SXS waveform data
+        modes: List of modes to include (e.g., [(2,2), (2,1), (3,3)]). If None, all available modes are used.
+    """
+    def __init__(self, file_path, modes=None):
+        self.file_path = file_path
+        
+        with h5py.File(file_path, 'r') as file:
+            self.data_len = len(file)
+            self.waveforms = list(file.keys())
+            if modes is None:
+                self.modes = np.array(list(file[self.waveforms[0]]['waveform'].keys()))
+            else:
+                self.modes = [str(x).replace(' ','') for x in modes]
+            self.waveform_data = []
+            self.metadata = []
+            self.TS_metadata = []
+            for i in range(self.data_len):
+                key = self.waveforms[i]
+                data, metadata_key, TS_metadata_key = self.get_hdf5_item(file, key)
+                self.waveform_data.append(data)
+                self.metadata.append(metadata_key)
+                self.TS_metadata.append(TS_metadata_key)
+        self.metadata = self.list_of_dicts_to_dict_of_lists(self.metadata)
+        self.TS_metadata = self.list_of_dicts_to_dict_of_lists(self.TS_metadata)
+        self.waveform_data = np.array(self.waveform_data)
+        
+        self.spin1 = np.array(self.metadata['dimensionless_spin1'])
+        self.spin2 = np.array(self.metadata['dimensionless_spin2'])
+        self.q = np.array(self.metadata['mass_ratio'])
+        self.q = np.maximum(self.q, 1)
+        self.q = 1/self.q
+        self.chi_p = self.chi_p(self.q, self.metadata['chi1_perp'], self.metadata['chi2_perp'])
+        self.params_data = np.stack([self.q, self.spin1[...,-1], self.spin2[...,-1]], axis=1)
+                
+    def get_hdf5_item(self, file, key):
+        """Extract waveform data and metadata for a given key from the HDF5 file."""
+        data = np.stack([file[key]['waveform'][lm] for lm in self.modes])
+        metadata = {k: v[()] for k,v in dict(file[key]['metadata']).items()}
+        TS_metadata = {k: v[()] for k,v in dict(file[key]['TS_metadata']).items()}
+        return data, metadata, TS_metadata
+        
+    @staticmethod
+    def list_of_dicts_to_dict_of_lists(list_of_dicts):
+        """Convert a list of dictionaries to a dictionary of lists."""
+        dict_of_lists = {}
+        for key in list_of_dicts[0].keys():
+            try:
+                dict_of_lists[key] = [dic[key] for dic in list_of_dicts]
+            except:
+                dict_of_lists[key] = [dic[key] for dic in list_of_dicts]
+        return dict_of_lists
+        
+    @staticmethod
+    def chi_p(q, S1_perp, S2_perp):
+        """
+        Calculate the effective precessing spin for a binary black hole system.
+
+        Parameters:
+        q (float): Mass ratio of the binary black hole system (m1/m2)
+        S1_perp (float): Magnitude of the component of the spin of the first black hole 
+                         perpendicular to the orbital angular momentum
+        S2_perp (float): Magnitude of the component of the spin of the second black hole 
+                         perpendicular to the orbital angular momentum
+
+        Returns:
+        float: Effective precessing spin parameter (chi_p)
+        """
+        # q = m2 / m1
+        A1 = 2 + 3 * q / 2
+        A2 = 2 + 3 / (2 * q)
+        
+        chi_p = np.maximum(A1 * S1_perp, A2 * S2_perp)
+        
+        return chi_p
+        
+    def __len__(self):
+        return len(self.waveform_data)
+        
+    def __getitem__(self, idx):
+        return self.waveform_data[idx], self.params_data[idx]
+
+class SXSLoss(nn.Module):
+    """Loss function for training on SXS waveform data.
+    
+    Computes a combination of mismatch loss and power difference loss.
+    """
+    def __init__(self, modes, device='cpu'):
+        super(SXSLoss, self).__init__()
+        self.modes = modes
+        self.device = device
+        self.cover_forward = Cover_Sphere(modes, n=5, infer_neg_m=True, device=device)
+        self.cover_forward_sxs = Cover_Sphere(modes, n=5, infer_neg_m=True, device=device)
+        
+    def forward(self, pred, wf):
+        wf_wave = self.cover_forward_sxs(wf).to(self.device).flatten(0,2)
+        outputs_wave = self.cover_forward(pred).flatten(0,2)
+        
+        mm_loss = mymismatch(outputs_wave, wf_wave)
+        mm_loss = torch.nan_to_num(mm_loss)
+        wave_power = 1
+        
+        power_diff = nn.L1Loss()(abs(wf_wave).sum(dim=-1), abs(outputs_wave).sum(dim=-1))
+        
+        loss = torch.log10((mm_loss * wave_power).mean()) + (power_diff.mean())
+        return loss
+
+# ========== Normalization Classes ==========
+
+class UnitGaussianNormalizer:
+    """Normalize data to have zero mean and unit variance.
+    
+    Args:
+        x: Input data to compute normalization statistics
+        eps: Small constant for numerical stability
+    """
+    def __init__(self, x, eps=0.00001):
+        super(UnitGaussianNormalizer, self).__init__()
+        self.mean = torch.mean(x, 0)
+        self.std = torch.std(x, 0)
+        self.eps = eps
+        
+    def encode(self, x):
+        """Normalize the input data."""
+        x = (x - self.mean) / (self.std + self.eps)
+        return x
+        
+    def decode(self, x, sample_idx=None):
+        """Denormalize the input data."""
+        if sample_idx is None:
+            std = self.std + self.eps
+            mean = self.mean
+        else:
+            if len(self.mean.shape) == len(sample_idx[0].shape):
+                std = self.std[sample_idx] + self.eps
+                mean = self.mean[sample_idx]
+            else:
+                std = self.std[:, sample_idx] + self.eps
+                mean = self.mean[:, sample_idx]
+        x = (x * std) + mean
+        return x
+        
+    def cuda(self):
+        """Move the normalizer to GPU."""
+        self.mean = self.mean.cuda()
+        self.std = self.std.cuda()
+        return self
+        
+    def cpu(self):
+        """Move the normalizer to CPU."""
+        self.mean = self.mean.cpu()
+        self.std = self.std.cpu()
+        return self
+
+class GaussianNormalizer:
+    """Normalize data globally to have zero mean and unit variance.
+    
+    Unlike UnitGaussianNormalizer, this computes global statistics.
+    """
+    def __init__(self, x, eps=0.00001):
+        super(GaussianNormalizer, self).__init__()
+        self.mean = torch.mean(x)
+        self.std = torch.std(x)
+        self.eps = eps
+        
+    def encode(self, x):
+        """Normalize the input data."""
+        x = (x - self.mean) / (self.std + self.eps)
+        return x
+        
+    def decode(self, x, sample_idx=None):
+        """Denormalize the input data."""
+        x = (x * (self.std + self.eps)) + self.mean
+        return x
+        
+    def cuda(self):
+        """Move the normalizer to GPU."""
+        self.mean = self.mean.cuda()
+        self.std = self.std.cuda()
+        return self
+        
+    def cpu(self):
+        """Move the normalizer to CPU."""
+        self.mean = self.mean.cpu()
+        self.std = self.std.cpu()
+        return self
+
+class RangeNormalizer:
+    """Normalize data to a specified range.
+    
+    Args:
+        x: Input data to compute normalization range
+        low: Lower bound of the target range
+        high: Upper bound of the target range
+    """
+    def __init__(self, x, low=0.0, high=1.0):
+        super(RangeNormalizer, self).__init__()
+        mymin = torch.min(x, 0)[0].view(-1)
+        mymax = torch.max(x, 0)[0].view(-1)
+        
+        self.a = (high - low)/(mymax - mymin)
+        self.b = -self.a * mymax + high
+        
+    def encode(self, x):
+        """Normalize the input data to the target range."""
+        s = x.size()
+        x = x.view(s[0], -1)
+        x = self.a * x + self.b
+        x = x.view(s)
+        return x
+        
+    def decode(self, x):
+        """Denormalize the input data back to the original range."""
+        s = x.size()
+        x = x.view(s[0], -1)
+        x = (x - self.b) / self.a
+        x = x.view(s)
+        return x
+
+# ========== Loss Functions ==========
+
+class LpLoss:
+    """Lp loss function for comparing tensors.
+    
+    Args:
+        d: Dimension of the input tensors
+        p: Order of the Lp norm
+        size_average: Whether to average the loss over the batch
+        reduction: Whether to reduce the loss to a scalar
+    """
+    def __init__(self, d=2, p=2, size_average=True, reduction=True):
+        super(LpLoss, self).__init__()
+        assert d > 0 and p > 0  # Dimension and Lp-norm type are positive
+        self.d = d
+        self.p = p
+        self.reduction = reduction
+        self.size_average = size_average
+        
+    def abs(self, x, y):
+        """Compute the absolute Lp loss."""
+        num_examples = x.size()[0]
+        h = 1.0 / (x.size()[1] - 1.0)
+        x = x.view(num_examples, -1)
+        y = y.view(num_examples, -1)
+        all_norms = (h ** (self.d / self.p)) * torch.norm(x - y, self.p, 1)
+        if self.reduction:
+            if self.size_average:
+                return torch.mean(all_norms)
+            else:
+                return torch.sum(all_norms)
+        return all_norms
+        
+    def rel(self, x, y):
+        """Compute the relative Lp loss."""
+        num_examples = x.size()[0]
+        diff_norms = torch.norm(x.reshape(num_examples, -1) - y.reshape(num_examples, -1), self.p, 1)
+        y_norms = torch.norm(y.reshape(num_examples, -1), self.p, 1)
+        if self.reduction:
+            if self.size_average:
+                return torch.mean(diff_norms / y_norms)
+            else:
+                return torch.sum(diff_norms / y_norms)
+        return diff_norms / y_norms
+        
+    def __call__(self, x, y):
+        return self.rel(x, y)
+
+# ========== SXS Utility Functions ==========
+
+def legendreDer(k, x):
+    """Compute the derivative of the Legendre polynomial."""
+    def _legendre(k, x):
+        return (2*k+1) * eval_legendre(k, x)
+    out = np.zeros((k, x.shape[0]))
+    for ki in range(k):
+        for i in range(x.shape[0]):
+            out[ki, i] = _legendre(ki+1, x[i])
+    return out.T
+
+def phi_(phi_c, x, lb=0, ub=1):
+    """Compute the phase function."""
+    return 0.5 * (1.0 - phi_c) * (1.0 - np.cos(np.pi * (x - lb) / (ub - lb))) + phi_c * (x - lb) / (ub - lb)
+
+def get_phi_psi(k, base):
+    """Get the basis functions for the given order and base type."""
+    x = Symbol('x')
+    phi = [0] * k
+    psi = [0] * k
+    phi[0] = 1.0 + 0.0 * x
+    if k > 0:
+        if base == 'legendre':
+            phi[1] = x
+            for i in range(1, k):
+                phi[i+1] = (2*i+1)/(i+1)*x*phi[i] - i/(i+1)*phi[i-1]
+            phi = phi[1:]
+        elif base == 'chebyshev':
+            for n in range(k):
+                phi[n] = chebyshevt(n, x)
+            phi = phi[1:]
+        elif base == 'sin':
+            for i in range(k):
+                phi[i] = np.sin(2*np.pi*(i+1)*x) / (2*(i+1)*np.pi**2)
+        else:
+            raise ValueError('Invalid basis')
+    return phi
+
+def get_filter(base, k):
+    """Get the filter for the given base type and order."""
+    def psi(n, x):
+        w = 1.0
+        for i in range(k):
+            w *= (x - i) / (i + 1)
+        return w * x ** (n - k)
+    
+    x = Symbol('x')
+    psi = [0] * k
+    for i in range(k):
+        psi[i] = psi(i+1, x)
+    
+    if base not in ['legendre', 'chebyshev']:
+        raise ValueError('Invalid basis')
+    
+    mat_phi = get_phi_psi(k, base)
+    mat_psi = np.zeros((k, k), dtype=float)
+    
+    for i in range(k):
+        for j in range(k):
+            integrand = mat_phi[i] * psi[j]
+            integrand = lambdify(x, integrand, 'numpy')
+            mat_psi[i, j] = integrand(1.0) - integrand(0.0)
+    
+    return mat_psi
+
+def train(model, train_loader, optimizer, epoch, device, verbose=0,
+         loss_fn=None, lr_schedule=None, post_proc=lambda args: args):
+    """Train the model for one epoch.
+    
+    Args:
+        model: The model to train
+        train_loader: DataLoader for training data
+        optimizer: Optimizer to use
+        epoch: Current epoch number
+        device: Device to run on ('cuda' or 'cpu')
+        verbose: Verbosity level
+        loss_fn: Loss function
+        lr_schedule: Learning rate scheduler
+        post_proc: Post-processing function for model outputs
+        
+    Returns:
+        Average training loss
+    """
+    model.train()
+    train_loss = 0.0
+    for batch_idx, (data, target) in enumerate(train_loader):
+        data, target = data.to(device), target.to(device)
+        optimizer.zero_grad()
+        output = model(data)
+        output = post_proc(output)
+        loss = loss_fn(output, target)
+        loss.backward()
+        optimizer.step()
+        train_loss += loss.item()
+        
+        if lr_schedule is not None:
+            lr_schedule.step()
+            
+        if verbose > 0 and batch_idx % verbose == 0:
+            print(f'Train Epoch: {epoch} [{batch_idx * len(data)}/{len(train_loader.dataset)} ' 
+                  f'({100. * batch_idx / len(train_loader):.0f}%)]\tLoss: {loss.item():.6f}')
+    
+    return train_loss / len(train_loader)
+
+def test(model, test_loader, device, verbose=0, loss_fn=None, post_proc=lambda args: args):
+    """Evaluate the model on test data.
+    
+    Args:
+        model: The model to evaluate
+        test_loader: DataLoader for test data
+        device: Device to run on ('cuda' or 'cpu')
+        verbose: Verbosity level
+        loss_fn: Loss function
+        post_proc: Post-processing function for model outputs
+        
+    Returns:
+        Average test loss
+    """
+    model.eval()
+    test_loss = 0.0
+    with torch.no_grad():
+        for data, target in test_loader:
+            data, target = data.to(device), target.to(device)
+            output = model(data)
+            output = post_proc(output)
+            test_loss += loss_fn(output, target).item()
+    
+    test_loss /= len(test_loader)
+    if verbose > 0:
+        print(f'\nTest set: Average loss: {test_loss:.4f}\n')
+    
+    return test_loss
+
+def get_stdout_path():
+    """Get the path to redirect stdout."""
+    return os.path.join(os.getcwd(), 'stdout.txt')
+
+def get_stderr_path():
+    """Get the path to redirect stderr."""
+    return os.path.join(os.getcwd(), 'stderr.txt')
+
+def get_folder_from_path(path_str):
+    """Extract folder name from a path string."""
+    return os.path.basename(os.path.normpath(path_str))
 
 class DANSurEnsemble(nn.Module):
     def __init__(self, decoders, modes_list, device = 'cpu'):
