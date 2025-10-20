@@ -10,7 +10,7 @@ import torch
 #%%
 
 
-dansur = DANSur()
+dansur = DANSur(device='cuda')
 nrsur = gwsurrogate.LoadSurrogate('NRHybSur3dq8')
 
 common_input = [2,[0,0,0],[0,0,0]]

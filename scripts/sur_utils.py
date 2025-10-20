@@ -32,11 +32,12 @@ class DANSur(SurrogateEvaluator):
         self.soft_param_lims = [8,0.8]
         self.hard_param_lims = [10,0.8]
 
-        print('Loaded %s model'%self.name)
+        
 
         
         self.modes_list = modes_list
         self.device = device
+        print('Loaded %s model'%self.name + ' on %s'%self.device)
     def _load_dimless_surrogate(self):
         """
         This function, which must be overriden for each derived class of
@@ -51,7 +52,7 @@ class DANSur(SurrogateEvaluator):
         See NRHybSur3dq8 for an example.
         """
         
-        DANSurModel = torch.jit.load(os.path.dirname(__file__)+'/DANSur_v2.pt', map_location='cpu')
+        DANSurModel = torch.jit.load(os.path.dirname(__file__)+'/DANSur.pt', map_location='cpu')
         return DANSurModel
     def _get_intrinsic_parameters(self, q, chiA0, chiB0, precessing_opts,
             tidal_opts, par_dict):
@@ -64,26 +65,42 @@ class DANSur(SurrogateEvaluator):
             For NRSur7dq4: x = [q, chiA, chiB], where chiA/chiB are vectors of
                 size 3.
         """
+        # print(q, chiA0, chiB0)
+        # print(q.shape, chiA0.shape, chiB0.shape)
         # check inputs are torch tensors. If not, convert them
-        q_in = q if (q<=1.).all() else 1./q
-        if not isinstance(q, torch.Tensor):
-            q = torch.tensor(q)
-            q_in = torch.tensor(q_in)
-        if not isinstance(chiA0, torch.Tensor):
-            chiA0 = torch.tensor(chiA0)
-        if not isinstance(chiB0, torch.Tensor):
-            chiB0 = torch.tensor(chiB0)
-        # check for batch dimension. If not present, add it
+        #if not isinstance(q, torch.Tensor):
+        #    q = torch.tensor(q)
+        #if not isinstance(chiA0, torch.Tensor):
+        #    chiA0 = torch.tensor(chiA0)
+        #if not isinstance(chiB0, torch.Tensor):
+        #    chiB0 = torch.tensor(chiB0)
         
-        # if len(q.shape) == 1:
-        #     q = q.unsqueeze(-1)
         if (chiA0).shape[-1] != 1:
             chiA0 = chiA0[...,2]
         if (chiB0).shape[-1] != 1:
             chiB0 = chiB0[...,2]
+
+
+        if len(q.shape) == 0:
+                q = q.unsqueeze(0)
+        if len(chiA0.shape) == 0:
+                chiA0 = chiA0.unsqueeze(0)
+        if len(chiB0.shape) == 0:
+                chiB0 = chiB0.unsqueeze(0)
+        if (q<=1).all(): q = 1./q
+
+        # check for batch dimension. If not present, add it
+        
+        # if len(q.shape) == 1:
+        #     q = q.unsqueeze(-1)
+        #if (chiA0).shape[-1] != 1:
+        #    chiA0 = chiA0[...,2]
+        #if (chiB0).shape[-1] != 1:
+        #    chiB0 = chiB0[...,2]
         # print(q, chiA0, chiB0)
         # print(chiA0.shape,chiB0.shape)
 
+        q_in = q if (q<=1.).all() else 1./q
         torch_inputs = torch.stack((q_in, chiA0, chiB0)).float().T
         if len(torch_inputs.shape) == 3:
             torch_inputs = torch_inputs.squeeze(0)
@@ -516,7 +533,7 @@ class DANSur(SurrogateEvaluator):
         fM_low = f_low*t_scale
         fM_ref = f_ref*t_scale
         # print(x)
-        print(x.shape)
+        # print(x.shape)
         h = self._sur_dimless(x)
         h = self.to_wave(h).numpy()
         h = {tuple(mode): h[i] for i, mode in enumerate(self.modes_list)}
@@ -553,14 +570,10 @@ class DANSur(SurrogateEvaluator):
                         h[(ell,-m)] = (-1)**ell * h[(ell,m)].conj()
 
         # Rescale domain to physical units
-        # print(h)
-        domain = np.arange(-4096+100, 100, 2).astype(float)#*np.ones_like(h.real)
+        
+        domain = np.tile(np.linspace(-4096+100,98,2048), (q.shape[0],1) )
 
         # domain
-        # print(domain.shape, t_scale.shape)
-        # print('Pre-scale', domain[0], domain[-1], self._domain_type)
-        # print(domain)
-        # print(M, t_scale)
         if self._domain_type == 'Time':
             domain = domain * t_scale
         elif self._domain_type == 'Frequency':
@@ -575,11 +588,7 @@ class DANSur(SurrogateEvaluator):
         # interpd_h = {}
         # for mode, hlm in h.items():
         #     if self._domain_type == 'Time':
-        if units=='mks':
-            dt_t = times[1] - times[0]
-        else: dt_t = domain[...,1]
-        # print(domain[0], domain[-1]+dt_t, 1/dt_t)
-        interp_domain = np.arange(domain[0], domain[-1]+dt_t, dt_t).astype(float)
+        interp_domain = np.linspace(domain[:,0], domain[:,-1], 2048).astype(float)
         
 
         # Rescale waveform to physical units
