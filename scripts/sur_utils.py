@@ -621,11 +621,13 @@ class DANSur(SurrogateEvaluator):
             # print(domain.shape, h[(2,2)].shape, interp_domain.shape)
             interp_h ={mode: np.array([np.interp(interp_domain[i], domain[i], h[mode][i]) for i in range(q.shape[0])]) for mode in h}
             if times is not None:
-                if len(interp_h) < len(times):
-                    interp_h = np.concatenate((np.zeros(len(times)-len(interp_h)), interp_h))
+                for mode in h:
+                    if len(interp_h[mode]) < len(times):
+                        interp_h[mode] = np.concatenate((np.zeros(len(times)-len(interp_h[mode])), interp_h[mode]))
             else:
-                if len(interp_h) < len(domain):
-                    interp_h = np.concatenate((np.zeros(len(domain)-len(interp_h)), interp_h))
+                for mode in h:
+                    if len(interp_h[mode]) < len(domain):
+                        interp_h[mode] = np.concatenate((np.zeros(len(domain)-len(interp_h[mode])), interp_h[mode]))
         else:
             # print(h) 
             interp_h = {mode: h[mode] for mode in h}
