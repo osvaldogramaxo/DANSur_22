@@ -512,6 +512,20 @@ class DANSur(SurrogateEvaluator):
             amp_scale = np.ones_like(q)
             t_scale = np.ones_like(q)
         elif units == 'mks':
+            M=np.array(M)
+            dist_mpc=np.array(dist_mpc)
+            if (not isinstance(M, np.ndarray) or M.ndim == 0) or \
+               (not isinstance(dist_mpc, np.ndarray) or dist_mpc.ndim == 0):
+                if (isinstance(M, np.ndarray) and M.ndim!=0) or (isinstance(dist_mpc, np.ndarray) and dist_mpc.ndim!=0):
+                    if isinstance(M, np.ndarray) and M.ndim != 0:
+                        dist_mpc = np.tile(dist_mpc, M.shape[0])
+                    elif isinstance(dist_mpc, np.ndarray) and dist_mpc.ndim != 0:
+                        M = np.tile(M, dist_mpc.shape[0])
+                else:
+                    M = np.array([M])
+                    dist_mpc = np.array([dist_mpc])
+            
+            
             amp_scale = \
                 M*_gwtools.Msuninsec*_gwtools.c/(1e6*dist_mpc*_gwtools.PC_SI)
             t_scale = _gwtools.Msuninsec * M
@@ -536,7 +550,10 @@ class DANSur(SurrogateEvaluator):
         # print(x.shape)
         h = self._sur_dimless(x)
         h = self.to_wave(h).numpy()
-        h = {tuple(mode): h[i] for i, mode in enumerate(self.modes_list)}
+        if len(h.shape) == 2:
+            h = {tuple(mode): h for mode in self.modes_list}
+        else:
+            h = {tuple(mode): h[i] for i, mode in enumerate(self.modes_list)}
         # taper the last portion of the waveform, regardless of whether or not
         # this corresponds to inspiral, merger, or ringdown.
         if taper_end_duration is not None:
@@ -575,24 +592,24 @@ class DANSur(SurrogateEvaluator):
 
         # domain
         if self._domain_type == 'Time':
-            domain = domain * t_scale
+            domain = domain * t_scale[:,None]
         elif self._domain_type == 'Frequency':
             raise Exception('Don\'t know what to with frequency domain')
             # domain /= t_scale
         else:
             raise Exception('Invalid _domain_type.')
         # print('Post-scale', domain[0], domain[-1])
-        domain = domain - domain[0] 
+
+
+        domain = domain - domain[...,0][:,None]
         domain = domain.astype(float)
-        
         # interpd_h = {}
         # for mode, hlm in h.items():
         #     if self._domain_type == 'Time':
-        interp_domain = np.linspace(domain[:,0], domain[:,-1], 2048).astype(float)
-        
+        interp_domain = np.linspace(domain[:,0], domain[:,-1], 2048).astype(float).T
+
 
         # Rescale waveform to physical units
-        
         if np.array(amp_scale != 1).any():
             if type(h) == dict:
                 h.update((x, y*amp_scale[:,None]) for (x,y) in h.items())
@@ -600,13 +617,19 @@ class DANSur(SurrogateEvaluator):
                 h *= amp_scale
         dynamics = None
         if units == 'mks':
-            interp_h = np.interp(interp_domain, domain , h)[-len(times):]
-            if len(interp_h) < len(times):
-                interp_h = np.concatenate((np.zeros(len(times)-len(interp_h)), interp_h))
+            # vec_interp = np.vectorize(np.interp)
+            # print(domain.shape, h[(2,2)].shape, interp_domain.shape)
+            interp_h ={mode: np.array([np.interp(interp_domain[i], domain[i], h[mode][i]) for i in range(q.shape[0])]) for mode in h}
+            if times is not None:
+                if len(interp_h) < len(times):
+                    interp_h = np.concatenate((np.zeros(len(times)-len(interp_h)), interp_h))
+            else:
+                if len(interp_h) < len(domain):
+                    interp_h = np.concatenate((np.zeros(len(domain)-len(interp_h)), interp_h))
         else:
             # print(h) 
-            interp_h = h[(2,2)]
-        rolltarg = int( len(interp_h)-np.argmax(abs(interp_h)) )
-        interp_h = np.roll(interp_h, rolltarg, -1)
+            interp_h = {mode: h[mode] for mode in h}
+        # rolltarg = int( len(interp_h)-np.argmax(abs(interp_h)) )
+        # interp_h = np.roll(interp_h, rolltarg, -1)
         
         return interp_domain, interp_h, dynamics
