@@ -1,3 +1,4 @@
+from re import S
 import gwsurrogate
 import torch
 import os
@@ -74,10 +75,15 @@ class DANSur(SurrogateEvaluator):
         #    chiA0 = torch.tensor(chiA0)
         #if not isinstance(chiB0, torch.Tensor):
         #    chiB0 = torch.tensor(chiB0)
-        
+        # print((chiA0).shape)
+        # print(np.sum(chiA0, axis=-1))
         if (chiA0).shape[-1] != 1:
+            if (chiA0.sum(dim=-1) != chiA0[...,-1]).any():
+                raise Exception('chiA0 should have only the z component if 3 dimensional')
             chiA0 = chiA0[...,2]
         if (chiB0).shape[-1] != 1:
+            if (chiB0.sum(dim=-1) != chiB0[...,-1]).any():
+                raise Exception('chiB0 should have only the z component if 3 dimensional')
             chiB0 = chiB0[...,2]
 
 
@@ -124,8 +130,12 @@ class DANSur(SurrogateEvaluator):
         chiBmag = torch.linalg.norm(chiB0, dim=-1) if len(chiB0.shape)!=1 else chiB0
 
         if not self.keywords['Precessing']:
-            if len(chiA0.shape)==1:
-                assert len(chiB0.shape)==1
+            # print(chiA0.shape,chiB0.shape)
+            # print(chiA0[..., :2])
+            # print(torch.linalg.norm(chiA0[..., :2]) )
+            if chiA0.shape[-1]==1:
+                assert chiB0.shape[-1]==1
+
             else:
                 if (torch.linalg.norm(chiA0[..., :2]) > grace
                         or torch.linalg.norm(chiB0[..., :2]) > grace):
@@ -601,7 +611,7 @@ class DANSur(SurrogateEvaluator):
         # print('Post-scale', domain[0], domain[-1])
 
 
-        domain = domain - domain[...,0][:,None]
+        domain = domain - domain[...,0][...,None]
         domain = domain.astype(float)
         # interpd_h = {}
         # for mode, hlm in h.items():
