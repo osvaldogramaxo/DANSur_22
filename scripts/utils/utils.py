@@ -5,7 +5,6 @@ import h5py
 import numpy as np
 from tqdm import tqdm
 from torch import tensor
-# from tsai.basics import *
 from torch.utils.data import Dataset
 import bilby
 import sys
@@ -18,112 +17,16 @@ import torch
 from torch.optim import Optimizer
 import matplotlib.pyplot as plt
 from torch import nn
-import numpy as np
 from pyspherical import spin_spherical_harmonic
-class nnPCA(nn.Module):
-    def __init__(self, amp_basis, amp_mean, phase_basis, phase_mean, device='cuda:0'):
-        super(nnPCA, self).__init__()
-        self.amp_basis = nn.Parameter(amp_basis.to(device), requires_grad=False)
-        self.amp_mean = nn.Parameter(amp_mean.to(device), requires_grad=False)
-        self.phase_basis = nn.Parameter(phase_basis.to(device), requires_grad=False)
-        self.phase_mean = nn.Parameter(phase_mean.to(device), requires_grad=False)
-        self.device = device
-    def forward(self, x):
-        a_ = (x[:,:len(self.amp_basis.T)].to(self.device)- self.amp_mean.to(self.device)).T
-        p_ = (x[:,len(self.amp_basis.T):].to(self.device)- self.phase_mean.to(self.device)).T
-        # print(self.amp_basis.dtype, a_.dtype)
-        proj_a = torch.matmul(self.amp_basis.to(self.device), a_) 
-        proj_p = torch.matmul(self.phase_basis.to(self.device), p_) 
-        out =  torch.cat([proj_a, proj_p], dim=0).to(self.device).T
-        return out
 
-
-        
-class invPCA(nn.Module):
-    def __init__(self, amp_basis, amp_mean, phase_basis, phase_mean, device='cuda:0'):
-        super(invPCA, self).__init__()
-        self.amp_basis = nn.Parameter(amp_basis.to(device), requires_grad=False)
-        self.amp_mean = nn.Parameter(amp_mean.to(device), requires_grad=False)
-        self.phase_basis = nn.Parameter(phase_basis.to(device), requires_grad=False)
-        self.phase_mean = nn.Parameter(phase_mean.to(device), requires_grad=False)
-        self.device = device
-    def forward(self, x):
-        a_ = x[:,:len(self.amp_basis)].to(self.device)
-        p_ = x[:,len(self.amp_basis):].to(self.device)
-        
-        # Convert a_ to the same type as self.amp_basis
-        # a_ = a_.to(self.amp_basis.dtype)      
-        
-        invproj_a = torch.matmul(a_, self.amp_basis.to(self.device)) + self.amp_mean.to(self.device)
-        invproj_p = torch.matmul(p_, self.phase_basis.to(self.device)) + self.phase_mean.to(self.device)
-        
-        out = torch.cat([invproj_a, invproj_p], dim=1).to(self.device)
-        return out
-    
-
-    
-    
-class resLin (nn.Module):
-    def __init__(self, in_features, out_features, bias=True, activation=None, use_norm=False):
-        super(resLin, self).__init__()
-        self.linear = nn.Linear(in_features = in_features, out_features=out_features, bias=bias)
-        self.downproj = nn.Linear(in_features=out_features, out_features=in_features, bias=bias)
-        self.activation = activation
-        self.use_norm = use_norm
-
-        if use_norm:
-            self.norm = nn.LayerNorm(out_features)  # Or nn.BatchNorm1d depending on your application
-
-    def forward(self, x):
-        out = self.linear(x)
-
-        if self.use_norm:
-            out = self.norm(out)
-
-        if self.activation:
-            out = self.activation(out)
-
-        out = self.downproj(out)
-
-        return x + out
-# class Decoder(nn.Module):
-#     def __init__(self, latent_dim,  amp_basis, amp_mean, 
-#                  phase_basis, phase_mean, 
-#                  layers = [128,256,1024,1024], act_fn = nn.ReLU, block = nn.Linear, device=None):
-#         super(Decoder, self).__init__()
-#         self.device = device
-        
-#         self.base_dim = amp_basis.shape[0] + phase_basis.shape[0]
-#         self.latent_dim = latent_dim
-#         self.amp_dim = amp_basis.shape[0]
-#         self.phase_dim = phase_basis.shape[0]
-#         self.block = block
-#         self.act_fn = act_fn
-        
-#         self.amp_basis = nn.Parameter(amp_basis.to(device), requires_grad=False)
-#         self.amp_mean = nn.Parameter(amp_mean.to(device), requires_grad=False)
-#         self.phase_basis = nn.Parameter(phase_basis.to(device), requires_grad=False)
-#         self.phase_mean = nn.Parameter(phase_mean.to(device), requires_grad=False)
-        
-        
-#         # self.project = self.block(self.latent_dim, self.base_dim).to(self.device)
-#         self.PCA = nnPCA(self.amp_basis, self.amp_mean, self.phase_basis, self.phase_mean, device=self.device)
-#         self.invPCA = invPCA(self.amp_basis, self.amp_mean, self.phase_basis, self.phase_mean, device=self.device)
-#         self.decoder = self._build_decoder(layers).to(self.device)
-        
-#         self.to(self.device)
-#         # print('Latent dim', self.latent_dim,', Base dim', self.base_dim)
-#     def _build_decoder(self, layers):
-#         layers_list = []
-#         # layers_list.append(block(self.latent_dim, self.base_dim))
-#         for i, current_layer in enumerate(layers):
-#             if i == 0:
-#                 layers_list.append(self.block(self.latent_dim, current_layer).to(self.device) )
-#             else:
-#                 layers_list.extend([self.act_fn(), self.block(layers[i-1], current_layer).to(self.device) ])
-#         # layers_list.extend([self.act_fn(), self.block(self.latent_dim)])
-#         layers_list.extend([self.act_fn(), self.block(layers[-1], self.base_dim).to(self.device)])
-#         return nn.Sequential(*layers_list)
+# Import common utilities
+from .common import (
+    nnPCA, invPCA, resLin, unwrap_phase, wrap_phase, get_phase,
+    torch_overlap, np_overlap, myoverlap, mymismatch, latent_mismatch,
+    weighted_mse_loss, weighted_L1_loss, MyDataset, MultiEpochsDataLoader,
+    _RepeatSampler, SinActivation, get_stdout_path, get_stderr_path,
+    get_folder_from_path, list_of_dicts_to_dict_of_lists, torch_unwrap
+)
 class Decoder(nn.Module):
     def __init__(self, latent_dim,  amp_basis, amp_mean, 
                  phase_basis, phase_mean, 
@@ -178,18 +81,6 @@ class Decoder(nn.Module):
     
     
     
-def unwrap_phase(complex_array):
-    phase = np.angle(complex_array)
-    unwrapped_phase = np.unwrap(phase)
-    return unwrapped_phase
-def wrap_phase(phase):
-    wrapped_phase = np.angle(np.exp(1j * phase))
-    return wrapped_phase
-def get_phase(elem):
-    out = unwrap_phase(elem)
-    out = out-out[0]
-    out = out*np.sign(out.mean())
-    return out
 def get_cplx_wave(param, length=2048, roll=0,whiten = False, sur = None):
     qs = 1/param['mass_ratio'] if param['mass_ratio'].max()<1 else param['mass_ratio']
     if 'Sur' in sur:
@@ -254,45 +145,6 @@ def convert_dict_to_list_of_dicts(input_dict):
     values_list = zip(*input_dict.values())
     return [dict(zip(keys, vals)) for vals in values_list]
 # %%
-def torch_overlap(h1, h2, dt=2, df=None):
-    h1_f = torch.fft.fft(h1)*dt
-    h2_f = torch.fft.fft(h2)*dt
-    df = 1.0 / len(h1) / dt
-    sig_norm = 4*df
-    
-    sig1 = torch.sqrt((h1_f.conj()*h1_f).sum(axis=-1).real*sig_norm)
-    sig2 = torch.sqrt((h2_f.conj()*h2_f).sum(axis=-1).real*sig_norm)
-    
-    norm = 1/sig1/sig2
-    
-    inner = (h1_f.conj()*h2_f).sum(axis=-1)
-    return nn.Hardtanh()( (4*df*inner*norm).real )
-def np_overlap(h1, h2, dt=2, df=None):
-    h1_f = np.fft.fft(h1)*dt
-    h2_f = np.fft.fft(h2)*dt
-    df = 1.0 / len(h1) / dt
-    sig_norm = 4*df
-    
-    sig1 = np.sqrt((h1_f.conj()*h1_f).sum(axis=-1).real*sig_norm)
-    sig2 = np.sqrt((h2_f.conj()*h2_f).sum(axis=-1).real*sig_norm)
-    
-    norm = 1/sig1/sig2
-    
-    inner = (h1_f.conj()*h2_f).sum(axis=-1)
-    x = (4*df*inner*norm).real 
-    hardtanh = np.maximum(0, np.minimum(1, x))
-    return hardtanh
-
-def myoverlap(h1, h2, dt=2, df=None):
-    if isinstance(h1, np.ndarray):
-        return np_overlap(h1, h2, dt, df)
-    elif isinstance(h1, torch.Tensor):
-        return torch_overlap(h1, h2, dt, df)
-    else:
-        raise ValueError('Input must be numpy or torch tensor')
-    
-def mymismatch(h1, h2, dt=2, df=None):
-    return (1-myoverlap(h1.double(), h2.double(), dt, df))
 def generate_dataset(priors, sur):
     """
     Generates and saves data to an HDF5 file.

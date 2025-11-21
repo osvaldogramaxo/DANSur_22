@@ -6,7 +6,6 @@ print('starting imports')
 import os
 import h5py
 import numpy as np
-# from sklearn.decomposition import PCA, TruncatedSVD
 from torch_pca import PCA
 from tqdm.auto import trange, tqdm
 import torch
@@ -17,87 +16,28 @@ import sys
 from torch_lr_finder import LRFinder
 from matplotlib import pyplot as plt
 import pytorch_optimizer as topt
-# from Sophia.sophia import SophiaG
-import seaborn as sns 
-from utils import *
+from ..utils.utils import *
 from functools import partial
 sns.set_style()
-# torch.set_default_dtype(torch.float32)
 # silence warnings
 import warnings
 warnings.filterwarnings("ignore")
 import functools
 print = functools.partial(print, flush=True) # all print()s will be called with "flush=True"
-# from tsai.data.core import TSDatasets, TSDataLoader
+
+# Import common utilities
+from ..utils.common import (
+    MyDataset, weighted_mse_loss, weighted_L1_loss, unwrap_phase, wrap_phase,
+    get_phase, torch_overlap, np_overlap, myoverlap, mymismatch, latent_mismatch,
+    SinActivation, MultiEpochsDataLoader, _RepeatSampler, get_stdout_path,
+    get_stderr_path, get_folder_from_path, torch_unwrap
+)
+
 #%%
 
-class MyDataset(Dataset):
-    def __init__(self, X, y, device = 'cpu'):
-        self.X = torch.Tensor(X).to(device)
-        self.y = torch.Tensor(y).to(device)
-
-    def __len__(self):
-        return len(self.X)
-
-    def __getitem__(self, index):
-        x = self.X[index]
-        y = self.y[index]
-        return x, y
-
-class SinActivation(nn.Module):
-    def forward(self, x):
-        return torch.sin(x)/2+0.5
 
 # %%
-def weighted_mse_loss(input, target, weight):
-    return torch.mean(weight * (input - target) ** 2)
-def weighted_L1_loss(input, target, weight):
-    return torch.mean(weight * (input - target).abs())
-def torch_unwrap(p, discont=None, axis=-1, period=torch.pi):
-    p = torch.as_tensor(p)
-    nd = p.ndim
-    dd = torch.diff(p, dim=axis)
-    if discont is None:
-        discont = period/2
-    slice1 = [slice(None, None)]*nd
-    slice1[axis] = slice(1, None)
-    slice1 = tuple(slice1)
-    # dtype = torch.promote_types(dd.dtype, period.dtype)
-
-    interval_high = period / 2
-    boundary_ambiguous = True
-    interval_low = -interval_high
-    ddmod = (dd - interval_low) % period + interval_low
-    if boundary_ambiguous:
-        mask = (ddmod == interval_low) & (dd > 0)
-        ddmod[mask] = interval_high
-    ph_correct = ddmod - dd
-    ph_correct[torch.abs(dd) < discont] = 0
-    up = p.clone()
-    up[slice1] = p[slice1] + ph_correct.cumsum(dim=axis)
-    return up
-
-def unwrap_phase(complex_array):
-    if isinstance(complex_array, np.ndarray):
-        phase = np.angle(complex_array)
-        unwrapped_phase = np.unwrap(phase)
-    elif isinstance(complex_array, torch.Tensor):
-        phase = torch.angle(complex_array)
-        unwrapped_phase = torch_unwrap(phase)
-    else:
-        raise ValueError('Input must be numpy or torch tensor')
-    return unwrapped_phase
-def wrap_phase(phase):
-    wrapped_phase = np.angle(np.exp(1j * phase))
-    return wrapped_phase
-def get_phase(elem):
-    out = unwrap_phase(elem)
-    out = out-out[0]
-    out = out*np.sign(out.mean())
-    if isinstance(out, np.ndarray):
-        return tensor(out) 
-    else:
-        return out 
+ 
 def get_phases(array, set_init_zero = True):
     out = unwrap_phase(array)
     if set_init_zero:
@@ -379,7 +319,6 @@ def get_pca_bases(base_tensor, return_only_xvar = False, plus_cross = False, qs 
     # print('DEBUG: MASK SHAPE:', qmask.cpu().numpy().shape)
     # print('DEBUG: PCA INPUT SHAPE:', base_tensor[:5000,:length].cpu().numpy().shape)
     ncs.append(nc)
-    # pca_1 = PCA(n_components = get_n_amp_from_n_phase(nc) )
     pca_1 = PCA(n_components = 19 )
     pca_1.fit(base_tensor[:10000,:length])
     pca_2 = PCA(n_components = 23) 
@@ -466,8 +405,6 @@ def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, 
     # num_epochs = 1000
     sys.stdout.flush()
     # scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=2e-2, steps_per_epoch=len(train_dl), epochs=num_epochs)
-    # from torch.cuda.amp import autocast, GradScaler
-    # scaler = GradScaler()
     train_losses = []
     val_losses = []
     mm_history = []

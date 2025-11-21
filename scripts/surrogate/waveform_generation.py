@@ -2,13 +2,12 @@
 import h5py
 import pyseobnr
 import numpy as np
-# from tsai.basics import *
 import bilby
 from bilby.core.prior import Uniform
 import sys
 og_stderr= sys.stderr
 og_stdout = sys.stdout
-from utils import *
+from ..utils.utils import *
 # %%
 
 # %%

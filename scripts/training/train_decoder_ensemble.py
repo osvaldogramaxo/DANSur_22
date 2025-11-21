@@ -4,7 +4,6 @@ print('starting imports')
 import os
 import h5py
 import numpy as np
-# from sklearn.decomposition import PCA, TruncatedSVD
 from torch_pca import PCA
 from tqdm.auto import trange, tqdm
 import torch
@@ -15,67 +14,26 @@ import sys
 from torch_lr_finder import LRFinder
 from matplotlib import pyplot as plt
 import pytorch_optimizer as topt
-# from Sophia.sophia import SophiaG
+from ..utils.utils import EarlyStopping, ASDL1Loss
 import seaborn as sns 
-from utils import EarlyStopping, ASDL1Loss
 sns.set_style()
 torch.set_default_dtype(torch.float64)
 # silence warnings
 import warnings
 warnings.filterwarnings("ignore")
-# from tsai.data.core import TSDatasets, TSDataLoader
-#%%
+
 import functools
 print = functools.partial(print, flush=True) # all print()s will be called with "flush=True"
 
+# Import common utilities
+from ..utils.common import (
+    MyDataset, weighted_mse_loss, weighted_L1_loss, unwrap_phase, wrap_phase,
+    get_phase, torch_overlap, np_overlap, myoverlap, mymismatch, latent_mismatch,
+    SinActivation, MultiEpochsDataLoader, _RepeatSampler, get_stdout_path,
+    get_stderr_path, get_folder_from_path
+)
+
 print("Imported all. Starting script")
-class MyDataset(Dataset):
-    def __init__(self, X, y, device = 'cpu'):
-        self.X = torch.Tensor(X).to(device)
-        self.y = torch.Tensor(y).to(device)
-
-    def __len__(self):
-        return len(self.X)
-
-    def __getitem__(self, index):
-        x = self.X[index]
-        y = self.y[index]
-        return x, y
-# class nnPCA(nn.Module):
-#     def __init__(self, amp_basis, amp_mean, phase_basis, phase_mean):
-#         super(nnPCA, self).__init__()
-#         self.amp_basis = nn.Parameter(amp_basis.cuda(), requires_grad=False) #amp_basis
-#         self.amp_mean = nn.Parameter(amp_mean.cuda(), requires_grad=False)
-#         self.phase_basis = nn.Parameter(phase_basis.cuda(), requires_grad=False) #phase_basis
-#         self.phase_mean = nn.Parameter(phase_mean.cuda(), requires_grad=False)
-#         self.a_length= (self.amp_basis.shape)[-1]
-#     def forward(self, x):
-#         a_ = (x[:,:self.a_length].cuda()- self.amp_mean.cuda()).T
-#         p_ = (x[:,self.a_length:].cuda()- self.phase_mean.cuda()).T
-#         # print(torch.matmul(pca_a_torch.cuda(), a_).shape, pca_p_means.shape)
-#         proj_a = torch.matmul(self.amp_basis.cuda(), a_) 
-#         proj_p = torch.matmul(self.phase_basis.cuda(), p_) 
-#         out =  torch.cat([proj_a, proj_p], dim=0).cuda().T
-#         return out
-# class invPCA(nn.Module):
-#     def __init__(self, amp_basis, amp_mean, phase_basis, phase_mean):
-#         super(invPCA, self).__init__()
-#         self.amp_basis = nn.Parameter(amp_basis.cuda(), requires_grad=False)
-#         self.amp_mean = nn.Parameter(amp_mean.cuda(), requires_grad=False)
-#         self.phase_basis = nn.Parameter(phase_basis.cuda(), requires_grad=False)
-#         self.phase_mean = nn.Parameter(phase_mean.cuda(), requires_grad=False)
-#     def forward(self, x):
-#         # print(x.shape)
-#         a_ = x[:,:len(self.amp_basis)].cuda()
-#         p_ = x[:,len(self.amp_basis):].cuda()
-        
-#         invproj_a = torch.matmul(a_, self.amp_basis.cuda())+self.amp_mean.cuda()
-        
-#         invproj_p = torch.matmul(p_, self.phase_basis.cuda())+self.phase_mean.cuda()
-        
-        
-#         out =  torch.cat([invproj_a, invproj_p], dim=1).cuda()
-#         return out
 class SinActivation(nn.Module):
     def forward(self, x):
         return torch.sin(x)/2+0.5
@@ -88,26 +46,7 @@ class Q_corrector(nn.Module):
         return encoded
 
 # %%
-def weighted_mse_loss(input, target, weight):
-    return torch.mean(weight * (input - target) ** 2)
-def weighted_L1_loss(input, target, weight):
-    return torch.mean(weight * (input - target).abs())
-
-def unwrap_phase(complex_array):
-    phase = np.angle(complex_array)
-    unwrapped_phase = np.unwrap(phase)
-    return unwrapped_phase
-def wrap_phase(phase):
-    wrapped_phase = np.angle(np.exp(1j * phase))
-    return wrapped_phase
-def get_phase(elem):
-    out = unwrap_phase(elem)
-    out = out-out[0]
-    out = out*np.sign(out.mean())
-    if isinstance(out, np.ndarray):
-        return tensor(out).float() 
-    else:
-        return out.float() 
+ 
 def get_phases(array, set_init_zero = True):
     out = unwrap_phase(array)
     if set_init_zero:
@@ -147,49 +86,6 @@ def to_wave(x, plus_cross = False):
             x = amp*torch.exp(1j*phase)
             return x
     
-def torch_overlap(h1, h2, dt=2, df=None):
-    h1_f = torch.fft.fft(h1)*dt
-    h2_f = torch.fft.fft(h2)*dt
-    df = 1.0 / len(h1) / dt
-    sig_norm = 4*df
-    
-    sig1 = torch.sqrt((h1_f.conj()*h1_f).sum(axis=-1).real*sig_norm)
-    sig2 = torch.sqrt((h2_f.conj()*h2_f).sum(axis=-1).real*sig_norm)
-    
-    norm = 1/sig1/sig2
-    
-    inner = (h1_f.conj()*h2_f).sum(axis=-1)
-    return nn.Hardtanh()( (4*df*inner*norm).real )
-
-def np_overlap(h1, h2, dt=2, df=None):
-    h1_f = np.fft.fft(h1)*dt
-    h2_f = np.fft.fft(h2)*dt
-    df = 1.0 / len(h1) / dt
-    sig_norm = 4*df
-    
-    sig1 = np.sqrt((h1_f.conj()*h1_f).sum(axis=-1).real*sig_norm)
-    sig2 = np.sqrt((h2_f.conj()*h2_f).sum(axis=-1).real*sig_norm)
-    
-    norm = 1/sig1/sig2
-    
-    inner = (h1_f.conj()*h2_f).sum(axis=-1)
-    x = (4*df*inner*norm).real 
-    hardtanh = np.maximum(0, np.minimum(1, x))
-    return hardtanh
-
-def myoverlap(h1, h2, dt=2, df=None):
-    if isinstance(h1, np.ndarray):
-        return np_overlap(h1, h2, dt, df)
-    elif isinstance(h1, torch.Tensor):
-        return torch_overlap(h1, h2, dt, df)
-    else:
-        raise ValueError('Input must be numpy or torch tensor')
-    
-def mymismatch(h1, h2, dt=2, df=None):
-    return (1-myoverlap(h1.double(), h2.double(), dt, df))
-
-def latent_mismatch(h1, h2, dt=2, df=None):
-    return 1-myoverlap(to_wave(h1), to_wave(h2), dt, df)
 
 
 def get_data(filepath, length=2048, N=None):
@@ -482,10 +378,8 @@ def get_joint_pca(base_tensor):
     pca_both = PCA(n_components = 50 )
     pca_both.fit(base_tensor.cpu().numpy()[:10000])
     
-
     pca_torch = tensor(pca_both.components_).float()
     pca_means = tensor(pca_both.mean_).float()
-
 
     return pca_torch, pca_means
 

@@ -10,23 +10,7 @@ from torch.utils.data import Dataset
 import h5py
 import numpy as np
 from tqdm.auto import tqdm
-def list_of_dicts_to_dict_of_lists(list_of_dicts):
-    """
-    Convert a list of dictionaries to a dictionary of lists.
-    
-    Args:
-        list_of_dicts: A list of dictionaries.
-        
-    Returns:
-        A dictionary of lists.
-    """
-    dict_of_lists = {}
-    for key in list_of_dicts[0].keys():
-        try:
-            dict_of_lists[key] = [dic[key] for dic in list_of_dicts]
-        except:
-            dict_of_lists[key] = [dic[key] for dic in list_of_dicts]
-    return dict_of_lists
+from .common import list_of_dicts_to_dict_of_lists
 
 class SXSDataset(Dataset):
     def __init__(self, file_path, modes=None):
@@ -68,15 +52,7 @@ class SXSDataset(Dataset):
         metadata = {k: v[()] for k,v in dict(file[key]['metadata']).items()}
         TS_metadata = {k: v[()] for k,v in dict(file[key]['TS_metadata']).items()}
         return data, metadata, TS_metadata
-    @staticmethod
-    def list_of_dicts_to_dict_of_lists(list_of_dicts):
-        dict_of_lists = {}
-        for key in list_of_dicts[0].keys():
-            try:
-                dict_of_lists[key] = [dic[key] for dic in list_of_dicts]
-            except:
-                dict_of_lists[key] = [dic[key] for dic in list_of_dicts]
-        return dict_of_lists
+    
     @staticmethod
     def chi_p(q, S1_perp, S2_perp):
         """

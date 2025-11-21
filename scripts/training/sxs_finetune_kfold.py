@@ -1,4 +1,3 @@
-
 #%%
 import numpy as np
 import scripts
@@ -17,6 +16,12 @@ from scripts.utils import *
 import pytorch_optimizer as topt
 import subprocess
 import time
+
+# Import common utilities
+from .common import (
+    MyDataset, MultiEpochsDataLoader, _RepeatSampler
+)
+
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 try:
     torch.tensor([1.]).cuda()
@@ -57,44 +62,6 @@ class SXSLoss(nn.Module):
         power_diff = nn.L1Loss()(abs(wf_wave).sum(dim=-1), abs(outputs_wave).sum(dim=-1) )
         loss = torch.log10( (mm_loss*wave_power).mean()  ) +  (power_diff.mean()) #+ torch.log10(asd_loss)
         return loss
-class MyDataset(Dataset):
-    def __init__(self, X, y, device):
-        self.X = X
-        self.y = y
-        self.device = device
-    
-    def __len__(self):
-        return len(self.X)
-    
-    def __getitem__(self, idx):
-        return self.X[idx].to(self.device), self.y[idx].to(self.device)
-
-class MultiEpochsDataLoader(torch.utils.data.DataLoader):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._DataLoader__initialized = False
-        self.batch_sampler = _RepeatSampler(self.batch_sampler)
-        self._DataLoader__initialized = True
-        self.iterator = super().__iter__()
-    
-    def __len__(self):
-        return len(self.batch_sampler.sampler)
-    
-    def __iter__(self):
-        for i in range(len(self)):
-            yield next(self.iterator)
-
-class _RepeatSampler(object):
-    """ Sampler that repeats forever.
-    Args:
-        sampler (Sampler)
-    """
-    def __init__(self, sampler):
-        self.sampler = sampler
-    
-    def __iter__(self):
-        while True:
-            yield from iter(self.sampler)
 
 
 time_limit = 60 * 60*48 # Number of seconds in one minute

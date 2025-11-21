@@ -1,6 +1,6 @@
 #%%
 import numpy as np
-from sur_utils import DANSur
+from .sur_utils import DANSur
 import gwsurrogate
 import warnings
 warnings.filterwarnings('ignore')
