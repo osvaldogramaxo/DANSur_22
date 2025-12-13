@@ -1,0 +1,47 @@
+# Training Configuration
+
+# Random Seed
+seed: 42
+
+# Time limit in seconds (48 hours)
+time_limit: 172800
+
+# Data Configuration
+data_path: "../sxs/sxs_waves_4modes_named.h5"
+modes:
+  - [2, 2]
+  - [3, 3]
+  - [2, 1]
+  - [4, 4]
+
+# Model Configuration
+model:
+  layers: [256, 1024, 512]
+  pretrain_path_template: "pretrain_files_SEOBNRv5HM/{mode}/models/decoder.pt"
+
+# Training Configuration
+training:
+  num_epochs: 10000
+  learning_rate: 1.0e-4
+  batch_size_ratio: 0.5 # Fraction of dataset for batch size
+  early_stopping:
+    patience: 1000
+    delta: 1.0e-2
+
+# LBFGS Fine-tuning Configuration
+lbfgs:
+  enabled: true
+  learning_rate: 1.0e-5
+  num_epochs: 1000
+  max_iter: 20
+  history_size: 100
+  early_stopping:
+    patience: 100
+    delta: 1.0e-4
+
+# Output Configuration
+output:
+  models_dir: "models/rolling"
+  plots_dir: "plots"
+  plotting: true
+  verbose: true

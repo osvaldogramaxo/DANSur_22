@@ -6,7 +6,7 @@ import numpy as np
 from tqdm import tqdm
 from torch import tensor
 # from tsai.basics import *
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 import bilby
 import sys
 from joblib import Parallel, delayed

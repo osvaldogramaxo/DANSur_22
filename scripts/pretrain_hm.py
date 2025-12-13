@@ -1,10 +1,13 @@
 #!/home/osvaldogramaxo/miniforge-pypy3/envs/torch/bin/python
+import seaborn as sns
+sns.set_style('whitegrid')
 #%%
 print('starting imports')
 import os
 import h5py
 import numpy as np
 # from sklearn.decomposition import PCA, TruncatedSVD
+from scipy.stats import binned_statistic_2d
 from torch_pca import PCA
 from tqdm.auto import trange, tqdm
 import torch
@@ -17,18 +20,25 @@ from matplotlib import pyplot as plt
 import pytorch_optimizer as topt
 # from Sophia.sophia import SophiaG
 import seaborn as sns 
-from utils import EarlyStopping, ASDL1Loss
+from utils import *
+from functools import partial
 sns.set_style()
-torch.set_default_dtype(torch.float64)
+# torch.set_default_dtype(torch.float32)
 # silence warnings
 import warnings
 warnings.filterwarnings("ignore")
-# from tsai.data.core import TSDatasets, TSDataLoader
-#%%
 import functools
 print = functools.partial(print, flush=True) # all print()s will be called with "flush=True"
 
-print("Imported all. Starting script")
+try:
+    torch.tensor(0).cuda()
+    device = 'cuda'
+except Exception as e:
+    print('Warning: CUDA not available.')
+    device = 'cpu'
+# from tsai.data.core import TSDatasets, TSDataLoader
+#%%
+
 class MyDataset(Dataset):
     def __init__(self, X, y, device = 'cpu'):
         self.X = torch.Tensor(X).to(device)
@@ -41,157 +51,12 @@ class MyDataset(Dataset):
         x = self.X[index]
         y = self.y[index]
         return x, y
-# class nnPCA(nn.Module):
-#     def __init__(self, amp_basis, amp_mean, phase_basis, phase_mean):
-#         super(nnPCA, self).__init__()
-#         self.amp_basis = nn.Parameter(amp_basis.cuda(), requires_grad=False) #amp_basis
-#         self.amp_mean = nn.Parameter(amp_mean.cuda(), requires_grad=False)
-#         self.phase_basis = nn.Parameter(phase_basis.cuda(), requires_grad=False) #phase_basis
-#         self.phase_mean = nn.Parameter(phase_mean.cuda(), requires_grad=False)
-#         self.a_length= (self.amp_basis.shape)[-1]
-#     def forward(self, x):
-#         a_ = (x[:,:self.a_length].cuda()- self.amp_mean.cuda()).T
-#         p_ = (x[:,self.a_length:].cuda()- self.phase_mean.cuda()).T
-#         # print(torch.matmul(pca_a_torch.cuda(), a_).shape, pca_p_means.shape)
-#         proj_a = torch.matmul(self.amp_basis.cuda(), a_) 
-#         proj_p = torch.matmul(self.phase_basis.cuda(), p_) 
-#         out =  torch.cat([proj_a, proj_p], dim=0).cuda().T
-#         return out
-# class invPCA(nn.Module):
-#     def __init__(self, amp_basis, amp_mean, phase_basis, phase_mean):
-#         super(invPCA, self).__init__()
-#         self.amp_basis = nn.Parameter(amp_basis.cuda(), requires_grad=False)
-#         self.amp_mean = nn.Parameter(amp_mean.cuda(), requires_grad=False)
-#         self.phase_basis = nn.Parameter(phase_basis.cuda(), requires_grad=False)
-#         self.phase_mean = nn.Parameter(phase_mean.cuda(), requires_grad=False)
-#     def forward(self, x):
-#         # print(x.shape)
-#         a_ = x[:,:len(self.amp_basis)].cuda()
-#         p_ = x[:,len(self.amp_basis):].cuda()
-        
-#         invproj_a = torch.matmul(a_, self.amp_basis.cuda())+self.amp_mean.cuda()
-        
-#         invproj_p = torch.matmul(p_, self.phase_basis.cuda())+self.phase_mean.cuda()
-        
-        
-#         out =  torch.cat([invproj_a, invproj_p], dim=1).cuda()
-#         return out
+
 class SinActivation(nn.Module):
     def forward(self, x):
         return torch.sin(x)/2+0.5
 
-class Q_corrector(nn.Module):
-    def forward(self, encoded):
-        encoded[:,0] = torch.sigmoid(encoded[:,0])
-        encoded[:,1] = torch.sigmoid(encoded[:,1])*2-1
-        encoded[:,2] = torch.sigmoid(encoded[:,2])
-        return encoded
-
 # %%
-def weighted_mse_loss(input, target, weight):
-    return torch.mean(weight * (input - target) ** 2)
-def weighted_L1_loss(input, target, weight):
-    return torch.mean(weight * (input - target).abs())
-
-def unwrap_phase(complex_array):
-    phase = np.angle(complex_array)
-    unwrapped_phase = np.unwrap(phase)
-    return unwrapped_phase
-def wrap_phase(phase):
-    wrapped_phase = np.angle(np.exp(1j * phase))
-    return wrapped_phase
-def get_phase(elem):
-    out = unwrap_phase(elem)
-    out = out-out[0]
-    out = out*np.sign(out.mean())
-    if isinstance(out, np.ndarray):
-        return tensor(out).float() 
-    else:
-        return out.float() 
-def get_phases(array, set_init_zero = True):
-    out = unwrap_phase(array)
-    if set_init_zero:
-        out = out-out[..., np.newaxis,0]
-    out = out*np.sign(out.mean(axis=-1)[...,np.newaxis])
-    print(type(out))
-    if isinstance(out, np.ndarray):
-        return tensor(out).float() 
-    else:
-        return out.float() 
-    
-
-def get_wave_power(x, normalize=True):
-    if isinstance(x, np.ndarray):
-        power = np.sum(np.abs(to_wave(x )), axis=-1 )
-
-    else:
-        power = torch.sum(torch.abs(to_wave(x )), dim=-1 )
-    if normalize:
-        power = power/power.max()
-    # power = power/power.max()
-    return power
-def ft_to_wave(x):
-    return torch.fft.ifft(to_wave(x))
-def to_wave(x, plus_cross = False):
-    # return x[:,:x.shape[-1]//2]*torch.exp(1j*x[:,x.shape[-1]//2:]) 
-    amp = x[:,:x.shape[-1]//2]
-    phase = x[:,x.shape[-1]//2:]
-    phase = (phase - phase[:,0:1])*torch.sign(phase[:,-1:].real)
-    if plus_cross:
-        return amp+1j*phase
-    else:
-        if isinstance(x, np.ndarray):
-            x = amp*np.exp(1j*phase)
-            return x
-        else:
-            x = amp*torch.exp(1j*phase)
-            return x
-    
-def torch_overlap(h1, h2, dt=2, df=None):
-    h1_f = torch.fft.fft(h1)*dt
-    h2_f = torch.fft.fft(h2)*dt
-    df = 1.0 / len(h1) / dt
-    sig_norm = 4*df
-    
-    sig1 = torch.sqrt((h1_f.conj()*h1_f).sum(axis=-1).real*sig_norm)
-    sig2 = torch.sqrt((h2_f.conj()*h2_f).sum(axis=-1).real*sig_norm)
-    
-    norm = 1/sig1/sig2
-    
-    inner = (h1_f.conj()*h2_f).sum(axis=-1)
-    return nn.Hardtanh()( (4*df*inner*norm).real )
-
-def np_overlap(h1, h2, dt=2, df=None):
-    h1_f = np.fft.fft(h1)*dt
-    h2_f = np.fft.fft(h2)*dt
-    df = 1.0 / len(h1) / dt
-    sig_norm = 4*df
-    
-    sig1 = np.sqrt((h1_f.conj()*h1_f).sum(axis=-1).real*sig_norm)
-    sig2 = np.sqrt((h2_f.conj()*h2_f).sum(axis=-1).real*sig_norm)
-    
-    norm = 1/sig1/sig2
-    
-    inner = (h1_f.conj()*h2_f).sum(axis=-1)
-    x = (4*df*inner*norm).real 
-    hardtanh = np.maximum(0, np.minimum(1, x))
-    return hardtanh
-
-def myoverlap(h1, h2, dt=2, df=None):
-    if isinstance(h1, np.ndarray):
-        return np_overlap(h1, h2, dt, df)
-    elif isinstance(h1, torch.Tensor):
-        return torch_overlap(h1, h2, dt, df)
-    else:
-        raise ValueError('Input must be numpy or torch tensor')
-    
-def mymismatch(h1, h2, dt=2, df=None):
-    return (1-myoverlap(h1.double(), h2.double(), dt, df))
-
-def latent_mismatch(h1, h2, dt=2, df=None):
-    return 1-myoverlap(to_wave(h1), to_wave(h2), dt, df)
-
-
 def get_data(filepath, length=2048, N=None):
     with h5py.File(filepath, 'r') as f:
         # wavs = [()] #2000:3400
@@ -208,22 +73,23 @@ def get_data(filepath, length=2048, N=None):
         # param_keys = f['Parameters'].attrs['names']
     return wavs, params
 
-
 class MyLoss(nn.Module):
     def __init__(self, model, odd_m = False):
         super(MyLoss, self).__init__()
         self.model = model
         self.odd_m = odd_m
-
-    def forward(self, outputs, wf):
-        print(outputs.shape, wf.shape)
+        self.model.float()
         
-        wf = wf.to(self.model.device)
+    def forward(self, outputs, wf):
+        outputs = outputs.float()
+        wf = wf.float()
+        
+        wf = wf.squeeze(1).to(self.model.device)
         data_pcs = self.model.PCA(wf )
         gen_pcs = self.model.PCA(outputs)
         outputs_wave = to_wave(outputs)
         wf_wave = to_wave(wf)
-        # print(outputs_wave.shape, wf_wave.shape)
+        
         amp_weights = torch.ones(self.model.amp_dim).to(self.model.device)
         amp_weights[:8] *= 1
         rec_loss_amp = weighted_L1_loss(data_pcs[...,:self.model.amp_dim], 
@@ -237,17 +103,24 @@ class MyLoss(nn.Module):
         
         power_diff = abs(get_wave_power(wf, normalize=False) - get_wave_power(outputs, normalize=False))
 
+        # m = eval(PLOTS_FOLDER.split('/')[-2])[1]
+        # odd_m = (m%2 == 1)
+        # odd_m_factor = ((1-y[:,0])/(1+y[:,0])).unsqueeze(-1) if self.odd_m else 1
         
         asd_loss = ASDL1Loss()(wf_wave, outputs_wave)
-        # print('DEBUG: LOSS COMPONENTS', torch.log10( (mm_loss*wave_power).mean()  ),'&', rec_loss,'&', power_diff.mean())
+
         loss = torch.log10( (mm_loss*wave_power).mean()  ) + \
-                (rec_loss).mean() + (power_diff).mean() #+ torch.log10(asd_loss)
-        print(loss)
+                (rec_loss) + (power_diff.mean()) #+ torch.log10(asd_loss)
         return loss
 
-def setup_data_from_file(filepath, length = 2048, mode=None, plus_cross = False, plotting = True, N=None):
+
+def setup_data_from_file(filepath, length = 2048, mode=(2,2), plus_cross = False, plotting = True, N=None):
+    modelist = [(2,2), (3,3),(2,1), (4,4)]
     wavs, params = get_data(filepath, length = length, N=N)
-    wavs = wavs[:,mode,:]
+    if len(wavs.shape) == 2:
+        #expand dim 1
+        wavs = np.expand_dims(wavs, 1)
+    wavs = wavs[:,modelist.index(mode),:]
     qs = 1/params[:,0] if params[:,0].min() < 1 else params[:,0]
     # print('########################################################\n',wavs.shape,'\n##################################################################')
     if len(wavs.shape) == 2:
@@ -255,11 +128,10 @@ def setup_data_from_file(filepath, length = 2048, mode=None, plus_cross = False,
         wavs = np.expand_dims(wavs, 1)
     # print('########################################################\n',wavs.shape,'\n##################################################################')
     
-    print("######################################################## Detecting heretics ########################################################")
     if plus_cross:
-        base_HERETICAL = torch.stack( ( tensor(wavs).real, tensor(wavs).imag ), dim=1).float().flatten(1)
+        base_HERETICAL = torch.stack( ( tensor(wavs).real, tensor(wavs).imag ), dim=1).flatten(1)
     else:
-        base_HERETICAL = torch.stack( ( abs(tensor(wavs)), get_phases(tensor(wavs)) ), dim=1).float().flatten(1)
+        base_HERETICAL = torch.stack( ( abs(tensor(wavs)), get_phases(tensor(wavs)) ), dim=1).flatten(1)
     #control bad waveforms due to NR contamination:
     pca_a = PCA(n_components = 150 )
     pca_a.fit(base_HERETICAL[:10_000,:length])
@@ -267,11 +139,7 @@ def setup_data_from_file(filepath, length = 2048, mode=None, plus_cross = False,
     pca_p.fit(base_HERETICAL[:10_000,length:])
     # calculate mismatch on reconstructions
     mms, orig, recon = plot_hist_reconstruct(pca_a, pca_p, base_HERETICAL.clone(), plotting = plotting, mode=mode)
-    max_mm = (mms[(qs>1.5)*(qs<8)]).max()
-    mask = (mms<=max_mm)
-    print(f'Accepted {sum(mask)}/{len(mask)} waveforms')
-    wavs, params = wavs[mask], params[mask]
-    print("######################################################## Destroyed heretics ########################################################")
+    
     
     
     train_size = int(0.8 * len(wavs))
@@ -279,24 +147,24 @@ def setup_data_from_file(filepath, length = 2048, mode=None, plus_cross = False,
 
     train_idx, val_idx = torch.utils.data.random_split(np.arange(len(wavs)), [train_size, val_size])
     
-    # base_ampphase = torch.stack((tensor(wavs[train_idx]).abs()*3e2, get_phases(wavs[train_idx])) , dim=1).float()
+    # base_ampphase = torch.stack((tensor(wavs[train_idx]).abs()*3e2, get_phases(wavs[train_idx])) , dim=1)
     if plus_cross:
-        base = torch.stack( ( tensor(wavs[train_idx]).real, tensor(wavs[train_idx]).imag ), dim=1).float()
+        base = torch.stack( ( tensor(wavs[train_idx]).real, tensor(wavs[train_idx]).imag ), dim=1)
     else:
-        base = torch.stack( ( abs(tensor(wavs[train_idx])), get_phases(tensor(wavs[train_idx])) ), dim=1).float()
+        base = torch.stack( ( abs(tensor(wavs[train_idx])), get_phases(tensor(wavs[train_idx])) ), dim=1)
     base_tensor = base.flatten(1)
-    base_params = torch.from_numpy(params[train_idx]).float()
+    base_params = torch.from_numpy(params[train_idx])
     base_params= base_params.squeeze(1)
-    base_params_q = torch.stack((base_params[:,0], base_params[:,2], base_params[:,3] )).T
+    base_params_q = torch.stack((base_params[:,0], base_params[:,1], base_params[:,2] )).T
     # base_params_q = torch.stack((1/base_params[:,0], base_params[:,1], base_params[:,2], base_params[:,3], base_params[:,4], base_params[:,5], base_params[:,6] )).T
     
     if plus_cross:
-        val_base = torch.stack( ( tensor(wavs[val_idx]).real, tensor(wavs[val_idx]).imag ), dim=1).float()
+        val_base = torch.stack( ( tensor(wavs[val_idx]).real, tensor(wavs[val_idx]).imag ), dim=1)
     else:
-        val_base = torch.stack( ( abs(tensor(wavs[val_idx])), get_phases(tensor(wavs[val_idx])) ), dim=1).float()
+        val_base = torch.stack( ( abs(tensor(wavs[val_idx])), get_phases(tensor(wavs[val_idx])) ), dim=1)
     base_valid = (val_base).flatten(1)
-    base_valid_params = torch.from_numpy(params[val_idx]).float()
-    base_valid_params_q = torch.stack((base_valid_params[:,0], base_valid_params[:,2], base_valid_params[:,3] )).T
+    base_valid_params = torch.from_numpy(params[val_idx])
+    base_valid_params_q = torch.stack((base_valid_params[:,0], base_valid_params[:,1], base_valid_params[:,2] )).T
     # base_valid_params_q = torch.stack((1/base_valid_params[:,0], base_valid_params[:,1], base_valid_params[:,2], base_valid_params[:,3], base_valid_params[:,4], base_valid_params[:,5], base_valid_params[:,6] )).T
     
     return base_tensor, base_params_q, base_valid, base_valid_params_q
@@ -328,9 +196,9 @@ def plot_hist_reconstruct(pca_a, pca_p, data, length = 2048, qs=None, plus_cross
         plt.figure()
         plt.scatter((mms), (wav_power.cpu().numpy()), s=0.1, alpha =0.5)
         plt.xscale('log')
-        plt.xlabel(r'$1-\mathcal{O}$')
+        plt.xlabel(r'$\mathfrak{M}$')
         plt.ylabel(r'$Normalized sqrt of Wave Power$')
-        plt.savefig(f'plots/recon_mm_vs_pow_{mode}.png', dpi=300)
+        plt.savefig(os.path.join(PLOTS_FOLDER, f'recon_mm_vs_pow.png'), dpi=300)
         plt.close()
         
         
@@ -338,16 +206,16 @@ def plot_hist_reconstruct(pca_a, pca_p, data, length = 2048, qs=None, plus_cross
         bins = np.logspace(np.log10(1e-16+mms.min()), np.log10(1e-16+mms[mms>0].max()), 100)
         if mms.min() == 0:
             bins = np.insert(bins, 0, 0.)
-        plt.hist((mms.flatten()), bins=bins, histtype='step', label = r'Raw $\mathfrak{m}$')
-        plt.hist((mms_weighted.flatten()), bins=bins, histtype='step', label = r'Power-weighted $\mathfrak{m}$')   
-        plt.xlabel(r'$1-\mathcal{O}$')
+        plt.hist((mms.flatten()), bins=bins, histtype='step', color='k')
+        # plt.hist((mms_weighted.flatten()), bins=bins, histtype='step', label = r'Power-weighted $\mathfrak{m}$')   
+        plt.xlabel(r'$\mathfrak{M}$')
         if mms.min() == 0:
             plt.xscale('symlog', linthresh=1e-16+mms[mms>0].min())
         else:
             plt.xscale('log')
         plt.yscale('log')
         plt.legend()
-        plt.savefig(f'plots/recon_mm_hist_{mode}.png', dpi=300)
+        plt.savefig(os.path.join(PLOTS_FOLDER, f'recon_mm_hist.png'), dpi=300)
         plt.close()
         
         if qs is not None:
@@ -358,9 +226,9 @@ def plot_hist_reconstruct(pca_a, pca_p, data, length = 2048, qs=None, plus_cross
             # plt.hist2d(np.log10(mms)[qs<2], qs[qs<2], cmap='Blues', bins=(bins_x, bins_y))
             plt.scatter((mms), qs.cpu(), s=0.1, alpha=0.5)
             plt.xscale('log')
-            plt.xlabel(r'$1-\mathcal{O}$')
+            plt.xlabel(r'$\mathfrak{M}$')
             plt.ylabel(r'$q$')
-            plt.savefig(f'plots/recon_mm_vs_q_{mode}.png', dpi=300)
+            plt.savefig(os.path.join(PLOTS_FOLDER, f'recon_mm_vs_q.png'), dpi=300)
             plt.close()
             
 
@@ -375,7 +243,7 @@ def get_n_amp_from_n_phase(n):
     """
     return int( np.round(2.4e-3*(n**2)+14) )
     
-def get_pca_bases(base_tensor, return_only_xvar = False, plus_cross = False, qs = None, plotting=True, length=2048, PLOTS_FOLDER = None):
+def get_pca_bases(base_tensor, return_only_xvar = False, plus_cross = False, qs = None, plotting=True, length=2048):
 
     
     
@@ -390,16 +258,17 @@ def get_pca_bases(base_tensor, return_only_xvar = False, plus_cross = False, qs 
     # print('DEBUG: PCA INPUT SHAPE:', base_tensor[:5000,:length].cpu().numpy().shape)
     ncs.append(nc)
     # pca_1 = PCA(n_components = get_n_amp_from_n_phase(nc) )
-    pca_1 = PCA(n_components = 30 )
-    pca_1.fit(base_tensor[:10000,:length])
-    pca_2 = PCA(n_components = 70) 
-    pca_2.fit(base_tensor[:10000,length:])
-    mms, orig, recon = plot_hist_reconstruct(pca_1, pca_2, base_tensor[:].clone(), plotting=plotting)
+    
+    pca_1 = PCA(n_components = 40 )
+    pca_1.fit(base_tensor[::10,:length])
+    pca_2 = PCA(n_components = 45) 
+    pca_2.fit(base_tensor[::10,length:])
+    mms, orig, recon = plot_hist_reconstruct(pca_1, pca_2, base_tensor[10000:].clone(), qs = qs[10000:], plotting=plotting)
 
     mms_ncs.append(mms)
     # mm_max = mms.max()
     
-    mms_power_weighted = mms*( get_wave_power(base_tensor[:]).cpu().numpy()**2 )
+    mms_power_weighted = mms*( get_wave_power(base_tensor[10000:]).cpu().numpy()**2 )
     mms_p_ncs.append(mms_power_weighted)
     mm_max = mms_power_weighted.max()
 
@@ -454,48 +323,13 @@ def get_pca_bases(base_tensor, return_only_xvar = False, plus_cross = False, qs 
     return pca_1_torch, pca_1_means, pca_2_torch, pca_2_means
 
 
-# def get_svd_bases(base_tensor):
-#     svd_a = TruncatedSVD(n_components = 30)
-#     svd_a.fit(base_tensor.cpu().numpy()[:,:length][:])
-
-#     svd_p = TruncatedSVD(n_components = 70)
-#     svd_p.fit(base_tensor.cpu().numpy()[:,length:][:])
-    
-
-#     svd_a_torch = tensor(svd_a.components_).float()397
-#     svd_p_torch = tensor(svd_p.components_).float()
-
-#     svd_a_means = 0.
-#     svd_p_means = 0.
-
-#     return svd_a_torch, svd_a_means, svd_p_torch, svd_p_means
-def get_joint_pca(base_tensor):
-    """
-    Perform a joint PCA on the input base_tensor.
-
-    Args:
-        base_tensor: The input base tensor for PCA.
-
-    Returns:
-        tuple: A tuple containing the PCA components (pca_torch) and mean (pca_means).
-    """
-    pca_both = PCA(n_components = 50 )
-    pca_both.fit(base_tensor.cpu().numpy()[:10000])
-    
-
-    pca_torch = tensor(pca_both.components_).float()
-    pca_means = tensor(pca_both.mean_).float()
-
-
-    return pca_torch, pca_means
-
 def find_best_lr(model, optimizer, train_dl, criterion = None, ax = None):
         lr_finder = LRFinder(model, optimizer, criterion, device="cuda")
-        lr_finder.range_test(train_dl, start_lr=1e-5, end_lr=7e-2, num_iter=100, diverge_th=5, step_mode='exp', smooth_f = 0.2)
+        lr_finder.range_test(train_dl, start_lr=1e-5, end_lr=2e-3, num_iter=100, diverge_th=5, step_mode='exp', smooth_f = 0.4)
         if ax is not None:
             lr_finder.plot(ax = ax)
         lr_finder.reset() # to reset the model and optimizer to their initial state
-        losses = lr_finder.history['loss']
+        losses = lr_finder.history['loss'][10:-10]
         min_grad_idx = (np.gradient(np.array(losses))).argmin()
         best_lr = lr_finder.history['lr'][min_grad_idx]
         return best_lr
@@ -503,11 +337,13 @@ def find_best_lr(model, optimizer, train_dl, criterion = None, ax = None):
 def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, mode='all', plotting=True, verbose = True):
     # raise Exception('Implement me')
     print('Training model')
-    odd_m = mode in [1,2]
+    m = eval(PLOTS_FOLDER.split('/')[-2])[1]
+    odd_m = (m%2 == 1)
+    bestmodel_weights = model.state_dict()
     bestloss = float('inf')
     worst_mm = float('inf')
     if scheduler is not None:
-        scheduler = scheduler(optimizer, patience=100, factor=0.5, verbose=True)
+        scheduler = scheduler(optimizer, patience=500, factor=0.5, verbose=True)
     # num_epochs = 1000
     sys.stdout.flush()
     # scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=2e-2, steps_per_epoch=len(train_dl), epochs=num_epochs)
@@ -524,7 +360,7 @@ def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, 
         best_ep = 0
         # iter_num = -1
         # k=10
-        early_stopping = EarlyStopping(patience=3000, verbose=False, delta=1e-1)
+        early_stopping = EarlyStopping(patience=1000, verbose=False)
         # if verbose:
         #     verb_range = trange(num_epochs)
         # else:
@@ -536,13 +372,18 @@ def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, 
                 model.latent_dim 
                 model.train()
                 for y, wf in train_dl:
-                    wf=wf.to(model.device)
+                    
+                    
+                    y = y.to(model.device).float()
+                    odd_m_factor = ((1-y[:,0])/(1+y[:,0])) if odd_m else 1
+                    wf = wf.to(model.device).float()
+                    wf = wf.squeeze(1)
                     data_pcs = model.PCA(wf)
-                    gen_pcs = model.decoder(y.to(model.device))
+                    gen_pcs = model.decoder(y)
                     
                     outputs = model.invPCA(gen_pcs)
                     outputs_wave = to_wave(outputs)
-                    wf_wave = to_wave(wf)
+                    wf_wave = to_wave(wf)*odd_m_factor.unsqueeze(-1)
                     
                     rec_loss_amp = weighted_L1_loss(data_pcs[...,:model.amp_dim], 
                                                     gen_pcs[...,:model.amp_dim], amp_weights )
@@ -551,10 +392,10 @@ def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, 
                                                     gen_pcs[...,model.amp_dim:] )
                     
                     rec_loss = rec_loss_amp + rec_loss_phase
-                    print(outputs_wave.shape, wf_wave.shape)
                     mm_loss = mymismatch( outputs_wave,  wf_wave )
                     mm_loss = torch.nan_to_num(mm_loss)
                     wave_power = get_wave_power(wf) if odd_m else 1
+                    
                     
                     power_diff = abs(get_wave_power(wf, normalize=False) - get_wave_power(outputs, normalize=False))
 
@@ -562,10 +403,10 @@ def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, 
                     asd_loss = ASDL1Loss( )(wf_wave, outputs_wave)
                     
                     loss = torch.log10( (mm_loss*wave_power).mean()  ) + \
-                           (rec_loss) + (power_diff.mean()) #+ torch.log10(asd_loss)
+                           nn.L1Loss()(data_pcs, gen_pcs)*10 + (power_diff.mean()) #+ torch.log10(asd_loss)
                     # Backward pass and optimization
                     optimizer.zero_grad(set_to_none=True)
-                    loss.backward()
+                    loss.backward()#create_graph=True)
                     optimizer.step()
                     # scheduler.step()
 
@@ -576,21 +417,24 @@ def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, 
                     rec_loss_valid = 0
                     mm_loss_valid = 0
                     for vy, vwf in val_dl:
+                        
+                        vy = vy.to(model.device).float()
+                        v_odd_m_factor = ((1-vy[:,0])/(1+vy[:,0])) if odd_m else 1
+                        vwf = vwf.to(model.device).float()
                         qs = 1/vy[:,0]
-                        vwf = vwf.to(model.device)
+                        vwf = vwf.squeeze(1)
                         val_pcs = model.PCA(vwf)
-                        decoded_valid = model.decoder(vy.to(model.device))
+                        decoded_valid = model.decoder(vy)
                         outputs_valid = model.invPCA(decoded_valid)
                         
                         outputs_wave_valid = to_wave(outputs_valid)
-                        vwf_wave = to_wave(vwf)
+                        vwf_wave = to_wave(vwf)*v_odd_m_factor.unsqueeze(-1)
                         
                         rec_loss_amp_valid = weighted_L1_loss(val_pcs[...,:model.amp_dim], 
                                                          decoded_valid[...,:model.amp_dim], amp_weights)
                         rec_loss_phase_valid = nn.L1Loss()(val_pcs[...,model.amp_dim:], 
                                                          decoded_valid[...,model.amp_dim:] )
                         rec_loss_valid += rec_loss_amp_valid + rec_loss_phase_valid
-                        
                         mm_loss_valid = mymismatch( outputs_wave_valid,  vwf_wave )
                         
                         v_wave_power = get_wave_power(vwf) if odd_m else 1
@@ -599,9 +443,9 @@ def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, 
                         
                         asd_loss_valid = ASDL1Loss( )(vwf_wave, outputs_wave_valid)
                         
-                        
+                        # print('DEBUG', mm_loss_valid.shape, v_odd_m_factor.shape)
                         val_loss += torch.log10((mm_loss_valid*v_wave_power).mean()) + \
-                                    (rec_loss_valid) + (power_diff_valid.mean())
+                                    nn.L1Loss()(val_pcs, decoded_valid)*10 + (power_diff_valid.mean())
 
                             
                     val_loss = val_loss/len(val_dl)    
@@ -628,18 +472,52 @@ def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, 
                         if mm_loss_valid.min() == 0:
                             bins = np.insert(bins, 0, 0.)
                         
-                        plt.hist(mm_loss_valid.detach().cpu().numpy(), bins = bins, histtype='step', color='red', label = r'Raw $\mathfrak{m}$')
-                        plt.hist((mm_loss_valid*v_wave_power).detach().cpu().numpy(), bins = bins, histtype='step', color='k', label=r'Power-corrected $\mathfrak{m}$')
-                        plt.xlabel(r'$1-\mathcal{O}$')
+                        # plt.hist(mm_loss_valid.detach().cpu().numpy(), bins = bins, histtype='step', color='red', label = r'Raw $\mathfrak{m}$')
+                        plt.hist((mm_loss_valid).detach().cpu().numpy(), bins = bins, histtype='step', color='k')
+                        plt.xlabel(r'$\mathfrak{M}$')
                         if mm_loss_valid.min() == 0:
                             plt.xscale('symlog', linthresh=1e-16+mm_loss_valid[mm_loss_valid>0].detach().cpu().numpy().min())
                         else:
                             plt.xscale('log')
                         plt.yscale( 'log' )
                         plt.title(f'Worst MM: {worst_mm:.2e} @ {best_ep}')
-                        plt.legend()
-                        plt.savefig(f'plots/mm_hist_rolling_{mode}.png', dpi=300)
+                        # plt.legend()
+                        plt.savefig(os.path.join(PLOTS_FOLDER, f'mm_hist_rolling.png'), dpi=300)
                         plt.close()
+
+                        ######################################################################################################
+                        plt.figure()
+                        chi1 = vy[:,1]
+                        chi2 = vy[:,2]
+                        
+                        bin_stat, x_edge, y_edge, bin_counts = binned_statistic_2d(chi1.cpu().numpy(), chi2.cpu().numpy(), torch.log10(mm_loss_valid).detach().cpu().numpy(), bins=100, statistic='max')
+                        plt.imshow(bin_stat.T, extent=[x_edge[0], x_edge[-1], y_edge[0], y_edge[-1]], aspect='auto', cmap='jet')
+                        # plt.xscale('log')
+                        plt.xlabel(r'$\chi_1$')
+                        plt.ylabel(r'$\chi_2$')
+                        plt.colorbar()
+                        plt.savefig(os.path.join(PLOTS_FOLDER, 'rolling', f'NN_mm_vs_chis.png'), dpi=300)
+                        plt.close()
+                        ######################################################################################################
+
+
+                        
+                        plt.figure()
+                        
+                        plt.hist(mm_loss_valid.detach().cpu().numpy(), bins = bins, histtype='step', color='k', label = r'Raw $\mathfrak{m}$')
+                        
+                        plt.hist((mm_loss_valid*v_wave_power).detach().cpu().numpy(), bins = bins, histtype='step', color='r', label = r'Power-weighted $\mathfrak{m}$')
+                        plt.xlabel(r'$\mathfrak{M}$')
+                        if mm_loss_valid.min() == 0:
+                            plt.xscale('symlog', linthresh=1e-16+mm_loss_valid[mm_loss_valid>0].detach().cpu().numpy().min())
+                        else:
+                            plt.xscale('log')
+                        plt.yscale( 'log' )
+                        plt.title(f'Worst MM: {worst_mm:.2e} @ {best_ep}')
+                        # plt.legend()
+                        plt.savefig(os.path.join(PLOTS_FOLDER, f'mm_hist_rolling_weight.png'), dpi=300)
+                        plt.close()
+                                                
                         
                         #plot the worst waveform reconstruction
                         plt.figure()
@@ -647,22 +525,22 @@ def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, 
                         plt.plot( to_wave( outputs_valid )[mm_loss_valid.argmax()].detach().cpu(), label='NN prediction' )
                         plt.legend()
                         plt.title(f'Worst MM: {worst_mm:.2e} @ {best_ep}, params: {vy.detach().cpu().numpy()[mm_loss_valid.argmax()]}')
-                        plt.savefig(f'plots/worst_recon_mm_{mode}.png', dpi=300)
+                        plt.savefig(os.path.join(PLOTS_FOLDER, f'worst_recon_mm.png'), dpi=300)
                         
                         plt.figure()
                         plt.scatter((mm_loss_valid*v_wave_power).detach().cpu().numpy(), qs.cpu().numpy(), s=0.1, alpha=0.5)
                         plt.xscale('log')
-                        plt.xlabel(r'$1-\mathcal{O}$')
+                        plt.xlabel(r'$\mathfrak{M}$')
                         plt.ylabel(r'$q$')
-                        plt.savefig(f'plots/rolling/NN_rescaled_mm_vs_q_{mode}.png', dpi=300)
+                        plt.savefig(os.path.join(PLOTS_FOLDER, 'rolling', f'NN_rescaled_mm_vs_q.png'), dpi=300)
                         plt.close()
                         
                         plt.figure()
                         plt.scatter((mm_loss_valid).detach().cpu().numpy(), qs.cpu().numpy(), s=0.1, alpha=0.5)
                         plt.xscale('log')
-                        plt.xlabel(r'$1-\mathcal{O}$')
+                        plt.xlabel(r'$\mathfrak{M}$')
                         plt.ylabel(r'$q$')
-                        plt.savefig(f'plots/rolling/NN_mm_vs_q_{mode}.png', dpi=300)
+                        plt.savefig(os.path.join(PLOTS_FOLDER, 'rolling', f'NN_mm_vs_q.png'), dpi=300)
                         plt.close()
                     # torch.save(bestmodel_weights, 'model.pt')
                 else:
@@ -680,7 +558,7 @@ def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, 
                 train_losses.append(loss.item())
                 val_losses.append(val_loss.item())
                 if (epoch % 10 == 0):
-                    torch.save(bestmodel_weights, f'models/rolling/decoder_mode_{mode}.pt')
+                    torch.save(bestmodel_weights, os.path.join(MODELS_FOLDER, 'rolling', f'decoder.pt'))
                     if plotting:
                         plt.figure()
                         plt.plot(train_losses, label='train')
@@ -688,18 +566,18 @@ def train_net(model, optimizer, train_dl, val_dl, num_epochs, scheduler = None, 
                         plt.legend()
                         plt.xlabel('Epoch')
                         plt.ylabel('Loss')
-                        plt.savefig(f'plots/losses_{mode}.png', dpi=300)
+                        plt.savefig(os.path.join(PLOTS_FOLDER, f'losses.png'), dpi=300)
                         plt.close()
     except KeyboardInterrupt:
         print('Execution interrupted. Wrapping up...')
         pass
         # Save the best model
     # if plotting:
-    torch.save(bestmodel_weights, f'models/decoder_mode_{mode}.pt')
+    torch.save(bestmodel_weights, os.path.join(MODELS_FOLDER, f'decoder.pt'))
     model.load_state_dict(bestmodel_weights)
     best_mean_mm = np.min(mm_history)
     # Save losses
-    torch.save({'train_losses': train_losses, 'val_losses': val_losses, 'val_mms': mm_history}, f'decoder_losses_{mode}.pt')
+    torch.save({'train_losses': train_losses, 'val_losses': val_losses, 'val_mms': mm_history}, os.path.join(MODELS_FOLDER, f'decoder_losses.pt'))
     return bestloss, best_mean_mm
 class MultiEpochsDataLoader(torch.utils.data.DataLoader):
 
@@ -732,22 +610,47 @@ class _RepeatSampler(object):
         while True:
             yield from iter(self.sampler)
             
-from utils import get_stdout_path, get_stderr_path, get_folder_from_path
+from .utils import get_stdout_path, get_stderr_path, get_folder_from_path
 # %%
+# plot_path = '.'
 if __name__ == "__main__":
-    # sys.stdout.flush()        
+    print('Starting script')
     import argparse
     # Create the argument parser
     parser = argparse.ArgumentParser(description='Train decoders for an individual mode.')
-    parser.add_argument('--mode', type=int, help='Which mode to use')
+    parser.add_argument('--approximant', type=str, help='Approximant to use')
+    parser.add_argument('--mode', type=str, help='Mode to use')
     print('Parsing arguments')
     # Parse the arguments
     args = parser.parse_args()
+    approx = args.approximant
+    mode = args.mode
+    mode = eval(mode)
+    # Define project folder structure
+    PARENT_FOLDER = os.getcwd()
+    DATA_FOLDER = os.path.join(PARENT_FOLDER, 'data')
+    PARENT_FOLDER = os.getcwd()+'/pretrain_files_'+approx+'/'+str(mode)
+    print('Working in ', PARENT_FOLDER)
+    
+    MODELS_FOLDER = os.path.join(PARENT_FOLDER, 'models')
+    PLOTS_FOLDER = os.path.join(PARENT_FOLDER, 'plots')
+
+    # Create folders if they don't exist
+    os.makedirs(DATA_FOLDER, exist_ok=True)
+    os.makedirs(MODELS_FOLDER, exist_ok=True)
+    os.makedirs(os.path.join(MODELS_FOLDER, 'rolling'), exist_ok=True)
+    os.makedirs(PLOTS_FOLDER, exist_ok=True)
+    os.makedirs(os.path.join(PLOTS_FOLDER, 'data'), exist_ok=True)
+    os.makedirs(os.path.join(PLOTS_FOLDER, 'rolling'), exist_ok=True)
+    # os.makedirs(os.path.join(PLOTS_FOLDER, 'pretrain_files'), exist_ok=True)
+    plot_path = PLOTS_FOLDER
+    # sys.stdout.flush()        
+
 
     # Setup device depending on CUDA availability
     try:
         torch.tensor(0).cuda()
-        device=f'cuda:{args.mode}'
+        device=f'cuda'
     except Exception as e:
         print('Warning: CUDA not available.')
         print(e)
@@ -763,74 +666,68 @@ if __name__ == "__main__":
     #     sys.stderr = f  # Redirect stderr to the file
     print('Running main')
     
-    odd_m = args.mode in [1,2]
+    # odd_m = args.mode in [1,2]
     # %%
     length = 2048
+    # base_tensor, base_params_q, base_valid, base_valid_params_q = setup_data_from_file(
+    #     'data/NRSur7dq4_dataset_q6_4modes_deucalion_1M.hdf', length = length, mode = args.mode,
+    #     )
     base_tensor, base_params_q, base_valid, base_valid_params_q = setup_data_from_file(
-        'NRHybSur3dq8_dataset_q8_1_10_4modes_deucalion_1M.hdf', length = length, mode = args.mode,
+        f'{DATA_FOLDER}/{approx}_hm_dataset.hdf', length = length, mode = mode,
         )
     
     # get_pca_bases(base_tensor)
     # raise SystemExit('Test run over')
     latent_dim = base_params_q.shape[-1]  # Choose the size of the latent space
     qs = 1/base_params_q[...,0]
+    filt = qs<=8
+    base_tensor = base_tensor[filt]
+    base_params_q = base_params_q[filt]
+    valid_qs = 1/base_valid_params_q[...,0]
+    valid_filt = valid_qs<=8
+    base_valid_params_q = base_valid_params_q[valid_filt]
+    base_valid = base_valid[valid_filt]
+    
+    
     base_params_q[...,0] = 1/base_params_q[...,0] if base_params_q[...,0].min() >= 1 else base_params_q[...,0]
     base_valid_params_q[...,0] = 1/base_valid_params_q[...,0] if base_valid_params_q[...,0].min() >= 1 else base_valid_params_q[...,0]
-    model = Decoder(latent_dim, *get_pca_bases(base_tensor, qs = qs, plotting=True, mode = args.mode), 
-                    layers = [2**8, 2**10, 2**9], act_fn = torch.nn.GELU)
+    # model = Decoder(latent_dim, *get_pca_bases(base_tensor, qs = qs, plotting=True, mode = args.mode), 
+    #                 layers = [2**8, 2**10, 2**9], act_fn = torch.nn.GELU)
+    model = Decoder(latent_dim, *get_pca_bases(base_tensor, qs = qs, plotting=True), 
+                    layers = [2**8, 2**10, 2**9], act_fn = torch.nn.GELU, device = device)
     
-    train_ds = MyDataset(base_params_q.to(model.device), base_tensor.to(model.device))
+    train_ds = MyDataset(base_params_q.to(model.device).float(), base_tensor.to(model.device).float())
     train_dl = MultiEpochsDataLoader(train_ds, 512, shuffle=False, pin_memory=False)
     
 
-    val_ds = MyDataset( base_valid_params_q.to(model.device), base_valid.to(model.device))
+    val_ds = MyDataset( base_valid_params_q.to(model.device).float(), base_valid.to(model.device).float())
     val_dl = MultiEpochsDataLoader(val_ds, batch_size=len(val_ds), shuffle=False, pin_memory=False)
-    
-    # load model in /home/osvaldogramaxo/scratch/PCA_approx/models/rolling/decoder_mode_0.pt
-    # model.load_state_dict(torch.load('/home/osvaldogramaxo/scratch/PCA_approx/models/rolling/decoder_mode_0.pt'))
 
-    
-    
-    
-
-    
-    # import pickle
-    # nr_pca_basis = pickle.load(open('pca_stuff.pkl', 'rb'))
-    # for i,x in enumerate(model.state_dict()):
-    #     if i==4: break
-    #     print(i,x)
-    #     model.state_dict()[x][:] *= 0 
-    #     model.state_dict()[x][:] += nr_pca_basis[i][:].cuda()*1
-    
-    model.float()
-    
-
-    # xvar = get_pca_bases(base_tensor,return_only_xvar=True)
-
-    # model = Decoder(latent_dim, *get_svd_bases(base_tensor), layers = [2**6, 2**9, 2**10])
-    # model = DecoderJoint(latent_dim, *get_joint_pca(base_tensor), layers = [2**6, 2**9, 2**10, 2**12])
-    
-    # optclass = torch.optim.AdamW
-    # optclass = topt.Yogi
-    from functools import partial
     # optclass = partial(SophiaG, rho=0.5, betas=(0.96, 0.99))
     # optimizer = topt.DiffGrad(model.parameters(), lr=3e-3, weight_decay=0e-4)
     #optimizer = SophiaG(model.parameters(), lr=3e-3,rho=0.5,betas=(0.96, 0.99), weight_decay=0e-2)
     # optclass = topt.SophiaH
-    # optclass = AdEMAMix
-    optclass = topt.Lamb
-    optimizer = optclass(model.parameters(), lr=3e-3)
+    # optclass = topt.SimplifiedAdEMAMix
+    optclass = topt.StableAdamW
+    optimizer = optclass(model.parameters(), lr=1)
     model.cuda()
+    model.float()
     criterion = nn.L1Loss()
 
 
    # find best LR
-    try:
-        best_lr = find_best_lr(model, optimizer, train_dl, criterion = MyLoss(model) )
-        print(f'Best LR found is {best_lr:.2e}')
-    except Exception as e:
-        print(e)
-        best_lr = 1e-4
+    if optclass == topt.DAdaptAdam:
+        best_lr = 1
+    else:
+        try:
+            fig, ax = plt.subplots()
+            best_lr = find_best_lr(model, optimizer, train_dl, criterion = MyLoss(model), ax = ax)
+            print(f'Best LR found is {best_lr:.2e}')
+            plt.savefig(os.path.join(PLOTS_FOLDER, f'lr_finder.png'), dpi=300)
+            plt.close()
+        except Exception as e:
+            print('LR finder failed: ', e)
+            best_lr = 1e-4
    # best_lr = 3e-3
     
     #optimizer.lr = best_lr
@@ -838,15 +735,14 @@ if __name__ == "__main__":
     #optimizer = SophiaG(model.parameters(), lr=1e-4,rho=0.5,betas=(0.96, 0.99), weight_decay=0e-2)
 
     model.to(model.device)
-    
+    model.float()
     # Training loop
-    n_epochs = 10_000
+    n_epochs = 20_000
     # model = torch.compile(model, mode='max-autotune')
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau
-    train_net(model, optimizer, train_dl, val_dl,  n_epochs, scheduler=scheduler, mode = args.mode)                        
+    train_net(model, optimizer, train_dl, val_dl,  n_epochs, scheduler=scheduler)                        
 
-    model.load_state_dict(torch.load(f'decoder_mode_{args.mode}.pt'))
-    # torch.save(model.state_dict(), f'decoder_mode_{args.mode}.pt')
+    torch.save(model.state_dict(), os.path.join(MODELS_FOLDER, f'decoder.pt'))
     # og_wave = to_wave(vwf)
     # pred_waves = to_wave(0l.invPCA(model.decoder(vy.to(model.device)).detach()))
     mms =(1-myoverlap(to_wave(base_valid.to(model.device)), to_wave(model.invPCA(model.decoder(base_valid_params_q.to(model.device)))  )).detach().cpu().abs().numpy())
@@ -858,9 +754,9 @@ if __name__ == "__main__":
     plt.figure()
     bins = np.logspace(np.log10(mms.min()+1e-16), np.log10(mms.max()), 100)
     plt.hist((mms), bins=bins, histtype='step')
-    plt.xlabel(r'$1-\mathcal{O}$')
+    plt.xlabel(r'$\mathfrak{M}$')
     plt.xscale('log')
-    plt.title(f'Validation mismatch distribution (mode = {args.mode})')
-    plt.savefig(f'plots/mm_hist_mode_{args.mode}.png', dpi=300)
+    plt.title(f'Validation mismatch distribution')
+    plt.savefig(os.path.join(PLOTS_FOLDER, f'{plot_path}/mm_hist.png'), dpi=300)
     
 
