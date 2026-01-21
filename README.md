@@ -129,7 +129,7 @@ This project uses:
 - Custom loss functions for waveform optimization
 - PyTorch for deep learning implementation
 
-Results are published in [arXiv:2412.06946](https://arxiv.org/abs/2412.06946v1)
+Results are published in [arXiv:2412.06946](https://arxiv.org/abs/2412.06946)
 
 ## License
 
