@@ -9,7 +9,7 @@ from gwtools import gwutils as _gwutils
 from gwsurrogate import SurrogateEvaluator
 class DANSur(SurrogateEvaluator):
     
-    def __init__(self, modes_list = [(2, 2)], device='cpu'):
+    def __init__(self, modes_list = [(2, 2)], device='cpu', batched=True):
         """
         gwsurrogate wrapper for the NRSurNN3dq8. Intrinsic parameters are mass ratio (q) and spins (chiA0, chiB0).  
         This model accepts batch inputs for the input parameters, so q can be a float or np.ndarray of shape (N,), where N is the batch size.
@@ -621,26 +621,33 @@ class DANSur(SurrogateEvaluator):
 
         # Rescale waveform to physical units
         if np.array(amp_scale != 1).any():
-            if type(h) == dict:
+            if isinstance(h, dict):
                 h.update((x, y*amp_scale[:,None]) for (x,y) in h.items())
             else:
-                h *= amp_scale
+                h *= amp_scale[:, None]
         dynamics = None
         if units == 'mks':
-            # vec_interp = np.vectorize(np.interp)
-            # print(domain.shape, h[(2,2)].shape, interp_domain.shape)
-            interp_h ={mode: np.array([np.interp(interp_domain[i], domain[i], h[mode][i]) for i in range(q.shape[0])]) for mode in h}
-            if times is not None:
-                for mode in h:
-                    if len(interp_h[mode]) < len(times):
-                        interp_h[mode] = np.concatenate((np.zeros(len(times)-len(interp_h[mode])), interp_h[mode]))
+            if isinstance(h, dict):
+                interp_h = {mode: np.array([np.interp(interp_domain[i], domain[i], h[mode][i]) for i in range(q.shape[0])]) for mode in h}
             else:
-                for mode in h:
-                    if len(interp_h[mode]) < len(domain):
-                        interp_h[mode] = np.concatenate((np.zeros(len(domain)-len(interp_h[mode])), interp_h[mode]))
+                interp_h = np.array([np.interp(interp_domain[i], domain[i], h[i]) for i in range(q.shape[0])])
+            
+            if times is not None:
+                T = len(times)
+                if isinstance(interp_h, dict):
+                    for mode in interp_h:
+                        if interp_h[mode].shape[-1] < T:
+                            pad_len = T - interp_h[mode].shape[-1]
+                            interp_h[mode] = np.pad(interp_h[mode], ((0, 0), (pad_len, 0)))
+                else:
+                    if interp_h.shape[-1] < T:
+                        pad_len = T - interp_h.shape[-1]
+                        interp_h = np.pad(interp_h, ((0, 0), (pad_len, 0)))
         else:
-            # print(h) 
-            interp_h = {mode: h[mode] for mode in h}
+            if isinstance(h, dict):
+                interp_h = {mode: h[mode] for mode in h}
+            else:
+                interp_h = h
         # rolltarg = int( len(interp_h)-np.argmax(abs(interp_h)) )
         # interp_h = np.roll(interp_h, rolltarg, -1)
         
